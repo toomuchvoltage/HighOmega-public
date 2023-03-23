@@ -1,3 +1,3 @@
-# HighOmega-demos
+# HighOmega
 
-This repo contains HighOmega demo packages. Download and enjoy!
+The main repo for the HighOmega game engine.
