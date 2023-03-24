@@ -25,18 +25,103 @@
 
 #version 460
 #extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+#define curInstInfo instanceInfo.props[nonuniformEXT(gl_InstanceCustomIndexEXT)]
+#define curTriBuf scene[nonuniformEXT(gl_InstanceCustomIndexEXT)]
 
 layout(location = 0) rayPayloadInEXT struct {
 	/*
-		1 bit: 	 intersected player
-		31 bits: originating player
+		2 bits:  hitType
+		1 bit:   secondary ray flag
+		29 bits: originating player Id
 	*/
-	uint isectPlayerOrigPlayerId;
+	uint hitTypeSecFlagOrigPlayerId;
 } rayLoad;
 hitAttributeEXT vec3 hitBaryCoord;
 
+layout (binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
+
+struct InstanceProps
+{
+	vec4 attribs;
+	vec4 attribs2;
+};
+
+layout (binding = 3) buffer InstanceInfoSSBO
+{
+	InstanceProps props[];
+} instanceInfo;
+
+struct PlayerFrustum
+{
+	vec4 eyeGeomRad;
+	vec4 eye2Whr;
+	vec4 lookUpLook2Up2;
+	vec4 geomCentYScale;
+	uint maskEnabledReserved;
+};
+
+layout (scalar, binding = 4) buffer playersInfoSSBO
+{
+	PlayerFrustum frusta[];
+} playersInfo;
+
+layout (scalar, binding = 8) uniform SunUBO
+{
+	vec3 dir;
+} sun;
+
+bool getScattering (uint packedFlags)
+{
+	return (packedFlags & 0x00000100) != 0;
+}
+
+struct TriangleFromVertBuf
+{
+	vec4 e1Col1;
+	f16vec2 uv1;
+	uint Norm1;
+	vec4 e2Col2;
+	f16vec2 uv2;
+	uint Norm2;
+	vec4 e3Col3;
+	f16vec2 uv3;
+	uint Norm3;
+};
+
+layout(scalar, set = 1, binding = 0) buffer CompleteTriBuffer
+{
+	TriangleFromVertBuf tri[];
+} scene[];
+
 void main()
 {
-	if (gl_IncomingRayFlagsEXT == gl_RayFlagsCullNoOpaqueEXT)
-		rayLoad.isectPlayerOrigPlayerId = floatBitsToUint (gl_HitTEXT);
+	if (gl_IncomingRayFlagsEXT == gl_RayFlagsCullNoOpaqueEXT && bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 29, 1) == 0)
+	{
+		uint curPlayerId = bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 0, 29);
+		uint cullMask = bitfieldExtract(playersInfo.frusta[curPlayerId].maskEnabledReserved, 24, 8);
+		uint rayFlags = gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullOpaqueEXT;
+		float tmin = 0.1;
+		float tmax = gl_HitTEXT;
+		traceRayEXT(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , gl_WorldRayOriginEXT, tmin, gl_WorldRayDirectionEXT, tmax, 0 );
+
+		if ( bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 30, 2) == 0 )
+			rayLoad.hitTypeSecFlagOrigPlayerId = bitfieldInsert (rayLoad.hitTypeSecFlagOrigPlayerId, 1, 30, 2); // if hitType is 0, set to 1
+
+		rayLoad.hitTypeSecFlagOrigPlayerId = bitfieldInsert (rayLoad.hitTypeSecFlagOrigPlayerId, 1, 29, 1); // Set to secondary
+
+		if ( !getScattering (floatBitsToUint (curInstInfo.attribs.x)) )
+		{
+			vec3 hitPos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * (gl_HitTEXT - 0.15);
+
+			rayFlags = gl_RayFlagsCullNoOpaqueEXT;
+			tmin = 0.1;
+			tmax = 1000000.0;
+			traceRayEXT(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , hitPos, tmin, sun.dir.xyz, tmax, 0 );
+		}
+	}
 }

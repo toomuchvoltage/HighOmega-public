@@ -46,6 +46,13 @@ namespace HIGHOMEGA
 			};
 			std::unordered_map <std::string, MeshMaterial> cachedMesheMaterials;
 			std::unordered_map <unsigned int, RandomizedSource> randomizedAudioSources;
+			struct SmokeSource
+			{
+				vec3 pos;
+				TimerObject timer;
+			};
+			std::unordered_map <unsigned long long, SmokeSource> smokePlumes;
+			unsigned long long globalSmokeCounter = 0u;
 			struct GeomInstance
 			{
 				GraphicsModel *graphicsModel = nullptr;
@@ -54,14 +61,21 @@ namespace HIGHOMEGA
 			};
 			std::unordered_map <std::string, GeomInstance> allItems;
 			unsigned int maxPlayers = 0;
+			std::vector<vec3> smokeQueue;
 
 		public:
+			std::unordered_map <unsigned int, unsigned int> teamIdCache;
+
 			void Create(unsigned int inpMaxPlayers);
 			void SetSampler(const std::string & samplerTag, unsigned char *inData, unsigned int inDataSize, ImageClass::PROVIDED_IMAGE_DATA_TYPE dataType, unsigned int w, unsigned int h, bool doMipMap, FORMAT inpFormat);
 			void SetMaterial(const std::string & materialTag, const std::string & diffTag, const std::string & nrmTag, const std::string & rghTag, const std::string & spcTag,
 				float emissivity, bool dielectric, float refractiveIndex, bool scattering, bool isAlphaKeyed, unsigned int playerId, unsigned char rayMask = 0xFFu);
 			void SetGeom(const std::string & meshTag, const std::string & materialTag, std::vector <TriUV> & triList, bool immutable, GroupedRenderSubmission & renderSubmission);
-			void RemoveGeom(std::string & meshTag, GroupedRenderSubmission & renderSubmission);
+			void RemoveGeom(const std::string & meshTag, GroupedRenderSubmission & renderSubmission, bool reportMissing = true);
+			void DeleteGeom(const std::string & meshTag, GroupedRenderSubmission & renderSubmission, bool reportMissing = true);
+			void CreateSmoke(vec3 origin);
+			void ProcessSmokes();
+			void ResetRound();
 			void RandomizeAudioSource(unsigned int sourceId, vec3 actualListener, vec3 actualOrigin, vec3 & newOrigin, float randDistance, float updateDistanceThreshold);
 			void Destroy(GroupedRenderSubmission & renderSubmission);
 		};
@@ -198,7 +212,7 @@ void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::SetGeom(const std::string & 
 	}
 }
 
-void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::RemoveGeom(std::string & meshTag, GroupedRenderSubmission & renderSubmission)
+void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::RemoveGeom(const std::string & meshTag, GroupedRenderSubmission & renderSubmission, bool reportMissing)
 {
 	if (allItems.find(meshTag) != allItems.end())
 	{
@@ -209,7 +223,75 @@ void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::RemoveGeom(std::string & mes
 		}
 	}
 	else
-		LOG() << "geom with meshTag " << meshTag << " was not found during removal attempt";
+		if (reportMissing) LOG() << "geom with meshTag " << meshTag << " was not found during removal attempt";
+}
+
+void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::DeleteGeom(const std::string & meshTag, GroupedRenderSubmission & renderSubmission, bool reportMissing)
+{
+	if (allItems.find(meshTag) != allItems.end())
+	{
+		if (allItems[meshTag].modelSubmitted)
+		{
+			renderSubmission.Remove(allItems[meshTag].submitItem);
+			allItems[meshTag].modelSubmitted = false;
+		}
+		if (allItems[meshTag].graphicsModel)
+		{
+			delete allItems[meshTag].graphicsModel;
+			allItems[meshTag].graphicsModel = nullptr;
+		}
+	}
+	else
+		if (reportMissing) LOG() << "geom with meshTag " << meshTag << " was not found during delete attempt";
+}
+
+void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::CreateSmoke(vec3 origin)
+{
+	smokeQueue.push_back(origin);
+}
+
+void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::ProcessSmokes()
+{
+	for (vec3 & curOrig : smokeQueue)
+	{
+		saurayClientInterface.SetMaterial(std::string("smokeMaterial"),
+			std::string("genericSampler"), std::string("genericSampler"), std::string("genericSampler"), std::string("genericSampler"),
+			0.0f, false, 0.0f, true, false, 0xFFFFFFFF);
+
+		std::vector<TriUV> smokeGeom;
+		// See: https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Mapper's_Reference
+		MakeThreeEllipsoids(curOrig + vec3 (0.0f, 0.0f, 54.0f), 144.0f, 64.0f, 20, smokeGeom);
+		SetGeom(std::string("smokeGeom") + std::to_string(globalSmokeCounter), std::string("smokeMaterial"), smokeGeom, true, DefaultPipelineSetup->mainRTSubmission);
+		smokePlumes[globalSmokeCounter].pos = curOrig;
+		smokePlumes[globalSmokeCounter].timer.Start();
+		globalSmokeCounter++;
+	}
+	smokeQueue.clear();
+
+	for (std::unordered_map<unsigned long long, SmokeSource>::iterator it = smokePlumes.begin(); it != smokePlumes.end(); )
+	{
+		if ((float)it->second.timer.Diff() > 15.0f)
+		{
+			DeleteGeom(std::string("smokeGeom") + std::to_string(it->first), DefaultPipelineSetup->mainRTSubmission);
+			smokePlumes.erase(it++);
+		}
+		else
+			it++;
+	}
+}
+
+void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::ResetRound()
+{
+	for (std::unordered_map<std::string, GeomInstance>::iterator it = allItems.begin(); it != allItems.end(); it++)
+		if (it->first.rfind("player") == 0)
+		{
+			std::string playerName = it->first;
+			DeleteGeom(playerName, DefaultPipelineSetup->mainRTSubmission, playerName.rfind("Enlarged") == std::string::npos);
+		}
+	for (std::unordered_map<unsigned long long, SmokeSource>::iterator it = smokePlumes.begin(); it != smokePlumes.end(); it++)
+		DeleteGeom(std::string("smokeGeom") + std::to_string(it->first), DefaultPipelineSetup->mainRTSubmission);
+	teamIdCache.clear();
+	smokePlumes.clear();
 }
 
 void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::RandomizeAudioSource(unsigned int sourceId, vec3 actualListener, vec3 actualOrigin, vec3 & newOrigin, float randDistance, float updateDistanceThreshold)
@@ -234,8 +316,8 @@ void HIGHOMEGA::SAURAY::SaurayClientInterfaceClass::Destroy(GroupedRenderSubmiss
 {
 	for (std::pair<const std::string, GeomInstance> & curItem : allItems)
 	{
-		renderSubmission.Remove(curItem.second.submitItem);
-		delete curItem.second.graphicsModel;
+		if (curItem.second.modelSubmitted) renderSubmission.Remove(curItem.second.submitItem);
+		if (curItem.second.graphicsModel) delete curItem.second.graphicsModel;
 	}
 	allItems.clear();
 	cachedMesheMaterials.clear();
@@ -276,50 +358,38 @@ HIGHOMEGA::SAURAY::SaurayPipelineSetupClass::SaurayPipelineSetupClass(unsigned i
 
 using namespace HIGHOMEGA::SAURAY;
 
-float QuakeDegToRad(int deg)
-{
-	return deg * (HIGHOMEGA_PI / 180.0f);
-}
-
-vec3 QuakeAngleVectors(int qa_pitch, int qa_yaw, int qa_roll)
-{
-	float sp, sy, cp, cy;
-
-	sy = sinf(QuakeDegToRad(qa_yaw));
-	cy = cosf(QuakeDegToRad(qa_yaw));
-	sp = sinf(QuakeDegToRad(qa_pitch));
-	cp = cosf(QuakeDegToRad(qa_pitch));
-
-	vec3 retVal;
-	retVal.x = cp * cy;
-	retVal.y = cp * sy;
-	retVal.z = -sp;
-
-	return retVal;
-}
-
 struct QueuedPlayer
 {
-	float absmin_x, absmin_y, absmin_z;
-	float absmax_x, absmax_y, absmax_z;
-	float e1x, e1y, e1z;
-	float e2x, e2y, e2z;
-	int qa1_pitch, qa1_yaw, qa1_roll;
-	int qa2_pitch, qa2_yaw, qa2_roll;
-	float yfov, whr;
+	unsigned int team_id;
+	float weaponLen,
+		absmin_x, absmin_y, absmin_z,
+		absmax_x, absmax_y, absmax_z,
+		e1x, e1y, e1z,
+		e2x, e2y, e2z,
+		look1x, look1y, look1z,
+		up1x, up1y, up1z,
+		look2x, look2y, look2z,
+		up2x, up2y, up2z,
+		yfov, whr;
 };
 std::unordered_map <unsigned int, QueuedPlayer> queuedPlayers;
 
 void SaurayProcessPlayer(unsigned int player_id)
 {
-	float absmin_x, absmin_y, absmin_z,
+	unsigned int team_id;
+	float weaponLen,
+		absmin_x, absmin_y, absmin_z,
 		absmax_x, absmax_y, absmax_z,
 		e1x, e1y, e1z,
-		e2x, e2y, e2z;
-	int qa1_pitch, qa1_yaw, qa1_roll,
-		qa2_pitch, qa2_yaw, qa2_roll;
-	float yfov, whr;
+		e2x, e2y, e2z,
+		look1x, look1y, look1z,
+		up1x, up1y, up1z,
+		look2x, look2y, look2z,
+		up2x, up2y, up2z,
+		yfov, whr;
 
+	team_id = queuedPlayers[player_id].team_id;
+	weaponLen = queuedPlayers[player_id].weaponLen;
 	absmin_x = queuedPlayers[player_id].absmin_x;
 	absmin_y = queuedPlayers[player_id].absmin_y;
 	absmin_z = queuedPlayers[player_id].absmin_z;
@@ -332,12 +402,18 @@ void SaurayProcessPlayer(unsigned int player_id)
 	e2x = queuedPlayers[player_id].e2x;
 	e2y = queuedPlayers[player_id].e2y;
 	e2z = queuedPlayers[player_id].e2z;
-	qa1_pitch = queuedPlayers[player_id].qa1_pitch;
-	qa1_yaw = queuedPlayers[player_id].qa1_yaw;
-	qa1_roll = queuedPlayers[player_id].qa1_roll;
-	qa2_pitch = queuedPlayers[player_id].qa2_pitch;
-	qa2_yaw = queuedPlayers[player_id].qa2_yaw;
-	qa2_roll = queuedPlayers[player_id].qa2_roll;
+	look1x = queuedPlayers[player_id].look1x;
+	look1y = queuedPlayers[player_id].look1y;
+	look1z = queuedPlayers[player_id].look1z;
+	up1x = queuedPlayers[player_id].up1x;
+	up1y = queuedPlayers[player_id].up1y;
+	up1z = queuedPlayers[player_id].up1z;
+	look2x = queuedPlayers[player_id].look2x;
+	look2y = queuedPlayers[player_id].look2y;
+	look2z = queuedPlayers[player_id].look2z;
+	up2x = queuedPlayers[player_id].up2x;
+	up2y = queuedPlayers[player_id].up2y;
+	up2z = queuedPlayers[player_id].up2z;
 	yfov = queuedPlayers[player_id].yfov;
 	whr = queuedPlayers[player_id].whr;
 
@@ -350,9 +426,6 @@ void SaurayProcessPlayer(unsigned int player_id)
 			break;
 		}
 	if (whr > 1.79f) thisPlayerLagging = true;
-	unsigned char player_mask = 0xF0u, player_mask_enlarged = 0x0Fu, cast_mask;
-	if (thisPlayerLagging) cast_mask = player_mask_enlarged;
-	else                   cast_mask = player_mask;
 
 	std::string curPlayerMaterial = std::string("player") + std::to_string(player_id) + std::string("Material");
 	std::string curPlayerGeom = std::string("player") + std::to_string(player_id) + std::string("Geometry");
@@ -363,24 +436,55 @@ void SaurayProcessPlayer(unsigned int player_id)
 		curPlayerMaterialEnlarged = curPlayerMaterial + std::string("Enlarged");
 		curPlayerGeomEnlarged = curPlayerGeom + std::string("Enlarged");
 	}
+	unsigned char team_mask, team_mask_enlarged, cast_mask;
+	switch (team_id)
+	{
+	case 0:
+		cast_mask = team_mask_enlarged = team_mask = 0xFFu;
+		break;
+	case 1:
+		team_mask = 0x0Cu;
+		team_mask_enlarged = 0x03u;
+		if (thisPlayerLagging) cast_mask = 0x30u;
+		else                   cast_mask = 0xC0u;
+		break;
+	case 2:
+		team_mask = 0xC0u;
+		team_mask_enlarged = 0x30u;
+		if (thisPlayerLagging) cast_mask = 0x03u;
+		else                   cast_mask = 0x0Cu;
+		break;
+	}
 	saurayClientInterface.SetMaterial(curPlayerMaterial,
 		std::string("genericSampler"), std::string("genericSampler"), std::string("genericSampler"), std::string("genericSampler"),
-		0.0f, false, 0.0f, false, false, player_id, player_mask);
+		0.0f, false, 0.0f, false, false, player_id, team_mask);
 	if (enlargePlayers)
 	{
 		saurayClientInterface.SetMaterial(curPlayerMaterialEnlarged,
 			std::string("genericSampler"), std::string("genericSampler"), std::string("genericSampler"), std::string("genericSampler"),
-			0.0f, false, 0.0f, false, false, player_id, player_mask_enlarged);
+			0.0f, false, 0.0f, false, false, player_id, team_mask_enlarged);
 	}
 
 	vec3 eye1 = vec3(e1x, e1y, e1z);
+	vec3 look1 = vec3(look1x, look1y, look1z);
+	vec3 up1 = vec3(up1x, up1y, up1z);
+	vec3 side1 = cross(look1, up1);
+
 	vec3 eye2 = vec3(e2x, e2y, e2z);
+	vec3 look2 = vec3(look2x, look2y, look2z);
+	vec3 up2 = vec3(up2x, up2y, up2z);
+	vec3 side2 = cross(look2, up2);
 	vec3 eyeDiff = (eye2 - eye1) * 0.5f;
 
-	std::vector<TriUV> playerGeom, playerGeomEnlarged;
+	vec3 eye15 = (eye1 + eye2) * 0.5f;
+	vec3 look15 = ((look1 + look2) * 0.5f).normalized();
+	vec3 up15 = ((up1 + up2) * 0.5f).normalized();
+	vec3 side15 = cross(look15, up15);
+
+	std::vector<TriUV> playerGeom, playerGeomEnlarged, playerGun;
 	if (enlargePlayers)
 	{
-		float *limits = DefaultPipelineSetup->SaurayTrace.playerLimits[player_id].aabbLim;
+		float* limits = DefaultPipelineSetup->SaurayTrace.playerLimits[player_id].aabbLim;
 
 		MakeBox(vec3(absmin_x - limits[0], absmin_y - limits[2], absmin_z - limits[4]), vec3(absmax_x + limits[1], absmax_y + limits[3], absmax_z + limits[5]), playerGeomEnlarged);
 		MakeBox(vec3(absmin_x - limits[6], absmin_y - limits[8], absmin_z - limits[10]) + eyeDiff, vec3(absmax_x + limits[7], absmax_y + limits[9], absmax_z + limits[11]) + eyeDiff, playerGeomEnlarged);
@@ -390,10 +494,23 @@ void SaurayProcessPlayer(unsigned int player_id)
 	MakeBox(vec3(absmin_x, absmin_y, absmin_z) + eyeDiff, vec3(absmax_x, absmax_y, absmax_z) + eyeDiff, playerGeom);
 	MakeBox(vec3(absmin_x, absmin_y, absmin_z) + eyeDiff * 2.0f, vec3(absmax_x, absmax_y, absmax_z) + eyeDiff * 2.0f, playerGeom);
 
+	MakeOrientedBox(eye1 - vec3(0.0f, 0.0f, 10.0f), look1 * weaponLen, up1 * 4.0f, side1 * 2.0f, playerGun); // The gun...
+	MakeOrientedBox(eye15 - vec3(0.0f, 0.0f, 10.0f), look15 * weaponLen, up15 * 4.0f, side15 * 2.0f, playerGun);
+	MakeOrientedBox(eye2 - vec3(0.0f, 0.0f, 10.0f), look2 * weaponLen, up2 * 4.0f, side2 * 2.0f, playerGun);
+
+	playerGeom.insert(playerGeom.end(), playerGun.begin(), playerGun.end());
+	if (enlargePlayers) playerGeomEnlarged.insert(playerGeomEnlarged.end(), playerGun.begin(), playerGun.end());
+
+	if (saurayClientInterface.teamIdCache.find(player_id) != saurayClientInterface.teamIdCache.end() && saurayClientInterface.teamIdCache[player_id] != team_id)
+	{
+		saurayClientInterface.DeleteGeom(curPlayerGeom, DefaultPipelineSetup->mainRTSubmission);
+		saurayClientInterface.DeleteGeom(curPlayerGeomEnlarged, DefaultPipelineSetup->mainRTSubmission, false);
+	}
+	saurayClientInterface.teamIdCache[player_id] = team_id;
 	saurayClientInterface.SetGeom(curPlayerGeom, curPlayerMaterial, playerGeom, false, DefaultPipelineSetup->mainRTSubmission);
 	if (enlargePlayers) saurayClientInterface.SetGeom(curPlayerGeomEnlarged, curPlayerMaterialEnlarged, playerGeomEnlarged, false, DefaultPipelineSetup->mainRTSubmission);
 
-	std::vector<TriUV> *envelopingGeom = &playerGeom;
+	std::vector<TriUV>* envelopingGeom = &playerGeom;
 	if (enlargePlayers) envelopingGeom = &playerGeomEnlarged;
 	vec3 geomMin, geomMax;
 	for (int i = 0; i != envelopingGeom->size(); i++)
@@ -423,10 +540,8 @@ void SaurayProcessPlayer(unsigned int player_id)
 	vec3 geomCent = (geomMin + geomMax) * 0.5f;
 	float geomRad = (geomCent - geomMax).length();
 
-	vec3 look1 = QuakeAngleVectors(qa1_pitch, qa1_yaw, qa1_roll).normalized();
-	vec3 look2 = QuakeAngleVectors(qa2_pitch, qa2_yaw, qa2_roll).normalized();
-	DefaultPipelineSetup->SaurayTrace.SetPlayer(player_id, cast_mask, eye1, look1, vec3(0.0f, 0.0f, 1.0f),
-		eye2, look2, vec3(0.0f, 0.0f, 1.0f),
+	DefaultPipelineSetup->SaurayTrace.SetPlayer(player_id, cast_mask, eye1, look1, up1,
+		eye2, look2, up2,
 		yfov, whr, geomCent, geomRad);
 }
 
@@ -448,11 +563,11 @@ void HIGHOMEGA::SAURAY::SaurayPipelineSetupClass::Run()
 	INSTRUMENTATION::FPSCounter::Start();
 	waitSemaphores = globalWaitSemaphores;
 	frameInstrument.Start();
-	for (std::pair<const unsigned int, QueuedPlayer> & curPlayer : queuedPlayers) {
+	for (std::pair<const unsigned int, QueuedPlayer>& curPlayer : queuedPlayers) {
 		SaurayProcessPlayer(curPlayer.first);
 	}
 	SaurayTrace.PrePass();
-	for (std::pair<const unsigned int, QueuedPlayer> & curPlayer : queuedPlayers) {
+	for (std::pair<const unsigned int, QueuedPlayer>& curPlayer : queuedPlayers) {
 		SaurayProcessPlayer(curPlayer.first);
 	}
 	SaurayTrace.Render();
@@ -528,9 +643,13 @@ int sauray_feedmap_quake2(char *mapName)
 		LOG() << "Could not load map: assets/maps/" << mapName << ".txt";
 		return -1;
 	}
-	LOG() << "Loaded assets/maps/" << mapName << ".txt successfully";
-	float *mapTris = (float *)fileContent;
-	unsigned int nTris = fileSize / (9 * sizeof(float));
+	float *mapContent = (float *)fileContent;
+	DefaultPipelineSetup->SaurayTrace.sun.dir[0] = mapContent[0];
+	DefaultPipelineSetup->SaurayTrace.sun.dir[1] = mapContent[1];
+	DefaultPipelineSetup->SaurayTrace.sun.dir[2] = mapContent[2];
+	DefaultPipelineSetup->SaurayTrace.sunDirChanged = true;
+	mapContent += 3;
+	unsigned int nTris = (fileSize - (3 * sizeof(float))) / (9 * sizeof(float));
 
 	unsigned int RGBAdata = 0xFFFFFFFFu;
 	saurayClientInterface.SetSampler(std::string("genericSampler"), (unsigned char *)&RGBAdata, sizeof(unsigned int), ImageClass::PROVIDED_IMAGE_DATA_TYPE::IMAGE_DATA_RGB, 1, 1, false, R8G8B8A8UN);
@@ -543,17 +662,17 @@ int sauray_feedmap_quake2(char *mapName)
 	mapGeom.resize(nTris);
 	for (int i = 0; i != nTris; i++)
 	{
-		curTri.eArr[0].x = mapTris[i * 9];
-		curTri.eArr[0].y = mapTris[i * 9 + 1];
-		curTri.eArr[0].z = mapTris[i * 9 + 2];
+		curTri.eArr[0].x = mapContent[i * 9];
+		curTri.eArr[0].y = mapContent[i * 9 + 1];
+		curTri.eArr[0].z = mapContent[i * 9 + 2];
 
-		curTri.eArr[1].x = mapTris[i * 9 + 3];
-		curTri.eArr[1].y = mapTris[i * 9 + 4];
-		curTri.eArr[1].z = mapTris[i * 9 + 5];
+		curTri.eArr[1].x = mapContent[i * 9 + 3];
+		curTri.eArr[1].y = mapContent[i * 9 + 4];
+		curTri.eArr[1].z = mapContent[i * 9 + 5];
 
-		curTri.eArr[2].x = mapTris[i * 9 + 6];
-		curTri.eArr[2].y = mapTris[i * 9 + 7];
-		curTri.eArr[2].z = mapTris[i * 9 + 8];
+		curTri.eArr[2].x = mapContent[i * 9 + 6];
+		curTri.eArr[2].y = mapContent[i * 9 + 7];
+		curTri.eArr[2].z = mapContent[i * 9 + 8];
 		mapGeom[i] = curTri;
 	}
 	saurayClientInterface.SetGeom(std::string("mapGeometry"), std::string("mapMaterial"), mapGeom, true, DefaultPipelineSetup->mainRTSubmission);
@@ -562,22 +681,33 @@ int sauray_feedmap_quake2(char *mapName)
 	return 0;
 }
 
-void sauray_player_quake2(unsigned int player_id,
+void sauray_start_smoke_csgo(float ox, float oy, float oz)
+{
+	saurayClientInterface.CreateSmoke(vec3(ox, oy, oz));
+}
+
+void sauray_player_csgo(unsigned int player_id, unsigned int teamId, float weaponLen,
 	float absmin_x, float absmin_y, float absmin_z,
 	float absmax_x, float absmax_y, float absmax_z,
 	float e1x, float e1y, float e1z,
 	float e2x, float e2y, float e2z,
-	int qa1_pitch, int qa1_yaw, int qa1_roll,
-	int qa2_pitch, int qa2_yaw, int qa2_roll,
+	float look1x, float look1y, float look1z,
+	float up1x, float up1y, float up1z,
+	float look2x, float look2y, float look2z,
+	float up2x, float up2y, float up2z,
 	float yfov, float whr)
 {
 	queuedPlayers[player_id] = {
+		teamId,
+		weaponLen,
 		absmin_x, absmin_y, absmin_z,
 		absmax_x, absmax_y, absmax_z,
 		e1x, e1y, e1z,
 		e2x, e2y, e2z,
-		qa1_pitch, qa1_yaw, qa1_roll,
-		qa2_pitch, qa2_yaw, qa2_roll,
+		look1x, look1y, look1z,
+		up1x, up1y, up1z,
+		look2x, look2y, look2z,
+		up2x, up2y, up2z,
 		yfov, whr
 	};
 }
@@ -596,12 +726,20 @@ void sauray_randomize_audio_source(unsigned int listenerId, float listenerX, flo
 	*retOriginZ = outputOrigin.z;
 }
 
+void sauray_reset_round_csgo()
+{
+	saurayClientInterface.ResetRound();
+}
+
 void sauray_remove_player(unsigned int player)
 {
 	std::string curPlayerGeom = std::string("player") + std::to_string(player) + std::string("Geometry");
+	std::string curPlayerGeomEnlarged = curPlayerGeom + std::string("Enlarged");
 
 	DefaultPipelineSetup->SaurayTrace.RemovePlayer(player);
 	saurayClientInterface.RemoveGeom(curPlayerGeom, DefaultPipelineSetup->mainRTSubmission);
+	saurayClientInterface.RemoveGeom(curPlayerGeomEnlarged, DefaultPipelineSetup->mainRTSubmission, false);
+	saurayClientInterface.teamIdCache.erase(player);
 }
 
 int sauray_loop()
@@ -614,6 +752,7 @@ int sauray_loop()
 
 	try {
 		DefaultPipelineSetup->Run();
+		saurayClientInterface.ProcessSmokes();
 
 		return 0;
 	} catch (std::runtime_error retErr) {
@@ -657,5 +796,260 @@ int sauray_thread_join()
 
 	DefaultPipelineSetup->saurayThread.join();
 	DefaultPipelineSetup->saurayThreadStarted = false;
+	saurayClientInterface.ProcessSmokes();
+	return 0;
+}
+
+namespace SAURAY_CALLS
+{
+	enum CALL_NAME
+	{
+		SET_DEBUG = 0,
+		START,
+		FEED_MAP,
+		REMOVE_PLAYER,
+		CAN_SEE,
+		THREAD_START,
+		THREAD_JOIN,
+		LOOP,
+		RESET_ROUND,
+		CREATE_SMOKE
+	};
+
+	struct SetDebugParams
+	{
+		unsigned int width;
+		unsigned int height;
+	};
+
+	struct StartParams
+	{
+		unsigned int maxPlayers;
+		unsigned int playerTraceRes;
+		unsigned int saurayTemporalHistoryAmount;
+	};
+
+	struct FeedMapParams
+	{
+		char mapName[256];
+	};
+
+	struct RemovePlayerParams
+	{
+		unsigned int playerId;
+	};
+
+	struct SetPlayerParams
+	{
+		unsigned int playerId;
+		unsigned int teamId;
+		float weaponLen;
+		float absMin[3];
+		float absMax[3];
+		float e1[3];
+		float e2[3];
+		float look1[3];
+		float up1[3];
+		float look2[3];
+		float up2[3];
+		float yfov;
+		float whr;
+	};
+
+	struct CanSeeParams
+	{
+		unsigned int viewerId;
+		unsigned int subjectId;
+	};
+
+	struct SmokeParams
+	{
+		float ox, oy, oz;
+	};
+
+	std::vector<SetPlayerParams> paramsToTransmit;
+
+	std::string className = std::string("SauRay_IPCHost");
+	std::string windowName = std::string("SauRay_IPCHostWindow");
+	int windowNumber;
+}
+
+using namespace SAURAY_CALLS;
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch (uMsg)
+	{
+		case WM_COPYDATA:
+		{
+			PCOPYDATASTRUCT CDSEnvelope = (PCOPYDATASTRUCT)lParam;
+			switch (CDSEnvelope->dwData)
+			{
+				case SET_DEBUG:
+				{
+					SetDebugParams *curParams = (SetDebugParams *)CDSEnvelope->lpData;
+					sauray_setdebug(curParams->width, curParams->height);
+					return (LRESULT)0;
+				}
+				case START:
+				{
+					StartParams *curParams = (StartParams *)CDSEnvelope->lpData;
+					float properMaxPlayersSqrt = ceilf(sqrtf((float)curParams->maxPlayers));
+					unsigned int properMaxPlayers = (unsigned int)(properMaxPlayersSqrt * properMaxPlayersSqrt);
+					return (LRESULT)sauray_start(properMaxPlayers, curParams->playerTraceRes, curParams->saurayTemporalHistoryAmount);
+				}
+				case FEED_MAP:
+				{
+					FeedMapParams *curParams = (FeedMapParams *)CDSEnvelope->lpData;
+					return (LRESULT)sauray_feedmap_quake2((char *)(std::string ("csgo/") + std::string(curParams->mapName)).c_str());
+				}
+				case REMOVE_PLAYER:
+				{
+					RemovePlayerParams *curParams = (RemovePlayerParams *)CDSEnvelope->lpData;
+					sauray_remove_player(curParams->playerId);
+					return (LRESULT)0;
+				}
+				case CAN_SEE:
+				{
+					CanSeeParams *curParams = (CanSeeParams *)CDSEnvelope->lpData;
+					return (LRESULT)sauray_can_see_quake2(curParams->viewerId, curParams->subjectId);
+				}
+				case THREAD_START:
+				{
+					paramsToTransmit.resize((unsigned int)CDSEnvelope->cbData / sizeof(SetPlayerParams));
+					memcpy(paramsToTransmit.data(), (SetPlayerParams *)CDSEnvelope->lpData, (size_t)CDSEnvelope->cbData);
+					for (int i = 0; i != paramsToTransmit.size(); i++)
+					{
+						SetPlayerParams & curParams = paramsToTransmit[i];
+						sauray_player_csgo(curParams.playerId, curParams.teamId, curParams.weaponLen,
+							curParams.absMin[0], curParams.absMin[1], curParams.absMin[2],
+							curParams.absMax[0], curParams.absMax[1], curParams.absMax[2],
+							curParams.e1[0], curParams.e1[1], curParams.e1[2],
+							curParams.e2[0], curParams.e2[1], curParams.e2[2],
+							curParams.look1[0], curParams.look1[1], curParams.look1[2],
+							curParams.up1[0], curParams.up1[1], curParams.up1[2],
+							curParams.look2[0], curParams.look2[1], curParams.look2[2],
+							curParams.up2[0], curParams.up2[1], curParams.up2[2],
+							curParams.yfov, curParams.whr);
+					}
+					paramsToTransmit.clear();
+					return (LRESULT)sauray_thread_start();
+				}
+				case THREAD_JOIN:
+				{
+					return (LRESULT)sauray_thread_join();
+				}
+				case LOOP:
+				{
+					paramsToTransmit.resize((unsigned int)CDSEnvelope->cbData / sizeof(SetPlayerParams));
+					memcpy(paramsToTransmit.data(), (SetPlayerParams *)CDSEnvelope->lpData, (size_t)CDSEnvelope->cbData);
+					for (int i = 0; i != paramsToTransmit.size(); i++)
+					{
+						SetPlayerParams & curParams = paramsToTransmit[i];
+						sauray_player_csgo(curParams.playerId, curParams.teamId, curParams.weaponLen,
+							curParams.absMin[0], curParams.absMin[1], curParams.absMin[2],
+							curParams.absMax[0], curParams.absMax[1], curParams.absMax[2],
+							curParams.e1[0], curParams.e1[1], curParams.e1[2],
+							curParams.e2[0], curParams.e2[1], curParams.e2[2],
+							curParams.look1[0], curParams.look1[1], curParams.look1[2],
+							curParams.up1[0], curParams.up1[1], curParams.up1[2],
+							curParams.look2[0], curParams.look2[1], curParams.look2[2],
+							curParams.up2[0], curParams.up2[1], curParams.up2[2],
+							curParams.yfov, curParams.whr);
+					}
+					paramsToTransmit.clear();
+
+					return (LRESULT)sauray_loop();
+				}
+				case RESET_ROUND:
+				{
+					sauray_reset_round_csgo();
+					return (LRESULT)0;
+				}
+				case CREATE_SMOKE:
+				{
+					SmokeParams *curParams = (SmokeParams *)CDSEnvelope->lpData;
+					sauray_start_smoke_csgo(curParams->ox, curParams->oy, curParams->oz);
+					return (LRESULT)0;
+				}
+			}
+			return (LRESULT)0;
+		}
+		default:
+			return DefWindowProc(hwnd, uMsg, wParam, lParam);
+	}
+}
+
+std::string GetLastErrorAsString()
+{
+	DWORD errorMessageID = ::GetLastError();
+	if (errorMessageID == 0) {
+		return std::string();
+	}
+
+	LPSTR messageBuffer = nullptr;
+
+	size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+
+	std::string message(messageBuffer, size);
+
+	LocalFree(messageBuffer);
+
+	return message;
+}
+
+int main(int argc, char *argv[])
+{
+	if (argc != 2)
+	{
+		windowNumber = 1;
+		LOG() << "Window number not (properly) supplied, assuming 1.";
+		LOG() << "Proper usage: HighOmega [windowNumber]";
+	}
+	else
+	{
+		windowNumber = atoi(argv[1]);
+	}
+	std::string newConsoleTitle = std::string("SauRay Window ") + std::to_string(windowNumber);
+#ifdef WIN32
+	SetConsoleTitle(newConsoleTitle.c_str());
+#else
+	std::cout << "\033]0;" << newConsoleTitle << "\007";
+#endif
+	className += std::to_string(windowNumber);
+	windowName += std::to_string(windowNumber);
+	WNDCLASSEX  WindowClassEx;
+	ZeroMemory(&WindowClassEx, sizeof(WNDCLASSEX));
+	WindowClassEx.cbSize = sizeof(WNDCLASSEX);
+	WindowClassEx.lpfnWndProc = WindowProc;
+	WindowClassEx.hInstance = GetModuleHandle(NULL);
+	WindowClassEx.lpszClassName = className.c_str();
+	if (RegisterClassEx(&WindowClassEx) != 0)
+	{
+		if ( CreateWindowEx(0, className.c_str(), windowName.c_str(), 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, GetModuleHandle(NULL), NULL) != NULL )
+		{
+			MSG msg;
+			BOOL bRet;
+			while ((bRet = GetMessage(&msg, NULL, 0, 0)) != 0)
+			{
+				if (bRet == -1)
+				{
+					return -1;
+				}
+				else
+				{
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+			}
+		}
+		else
+		{
+			LOG() << GetLastErrorAsString();
+			UnregisterClass(className.c_str(), GetModuleHandle(NULL));
+			return -1;
+		}
+	}
 	return 0;
 }

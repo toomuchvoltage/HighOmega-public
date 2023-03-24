@@ -29,10 +29,11 @@
 
 layout(location = 0) rayPayloadInEXT struct {
 	/*
-		1 bit: 	 intersected player
-		31 bits: originating player
+		2 bits:  hitType
+		1 bit:   secondary ray flag
+		29 bits: originating player Id
 	*/
-	uint isectPlayerOrigPlayerId;
+	uint hitTypeSecFlagOrigPlayerId;
 } rayLoad;
 hitAttributeEXT vec3 hitBaryCoord;
 
@@ -78,13 +79,13 @@ void registerPlayerHit(uint viewerPlayer, uint subjectPlayer)
 
 void main()
 {
-	uint originatingPlayerId = bitfieldExtract(rayLoad.isectPlayerOrigPlayerId, 0, 31);
+	uint originatingPlayerId = bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 0, 29);
 	uint hitPlayerId = floatBitsToUint (curInstInfo.attribs.y);
 
-	if ( hitPlayerId != originatingPlayerId && hitPlayerId != 0xFFFFFFFF )
+	if ( hitPlayerId != 0xFFFFFFFF )
 	{
 		registerPlayerHit (originatingPlayerId, hitPlayerId);
-		rayLoad.isectPlayerOrigPlayerId = bitfieldInsert(rayLoad.isectPlayerOrigPlayerId, 1, 31, 1); // If anyone was hit during primary
+		rayLoad.hitTypeSecFlagOrigPlayerId = bitfieldInsert (rayLoad.hitTypeSecFlagOrigPlayerId, bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 29, 1) + 2, 30, 2);
 	}
 	ignoreIntersectionEXT;
 }

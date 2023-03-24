@@ -1,6 +1,6 @@
-# SauRay<sup>TM</sup> for vkQuake2
+# SauRay<sup>TM</sup> for CS:GO (via IPC through SourceMod)
 
-This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](http://sauray.tech) for [our vkQuake2 flavor](https://github.com/toomuchvoltage/SauRay/tree/master/vkQuake2). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
+This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](http://sauray.tech) for [our CS:GO SourceMod plugin](https://github.com/toomuchvoltage/SauRay/tree/master/CSGO). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
 
 If you are unfamiliar with SauRay<sup>TM</sup>, please read [our technical brief](http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf) or visit [our website](http://sauray.tech).
 
@@ -35,13 +35,17 @@ Beyond what is stated in http://toomuchvoltage.com/pub/sauray_techbrief/sauray_t
 
 All else -- i.e. regular HighOmega source code -- is provided under the MIT license. A complete version of HighOmega will be provided under the MIT license at a later date.
 
+# Why IPC?
+
+Source1 is a 32 bit engine and thus native SourceMod extensions will have to be 32 bit DLLs/SOs as well. Cross-vendor raytracing via VK_KHR_ray_tracing requires a 64-bit Vulkan instance. This method of integration shows that non-invasive/fully-decoupled integrations of SauRay<sup>TM</sup> are also possible.
+
 # Requirements
 
-Vulkan SDK and Visual Studio 2022 are required to compile. A video card with hardware accelerated ray-tracing is required. Note that with increased player count, raytracing and compute demands of the card increase. However, given that Quake II servers have a tickrate of 10 (100ms per state update) and that SauRay<sup>TM</sup> can (and probably should) run async in most cases, it should be rather difficult to hit or exceed this limit.
+Vulkan SDK and Visual Studio 2022 are required to compile. A video card with hardware accelerated ray-tracing is required. Note that with increased player count, raytracing and compute demands of the card increase. Currently our implementation can host a single competitive match per an RTX 2080Ti at 128 ticks/second or two at 64 ticks/second with a 640x640 resolution for every player.
 
 # How to Compile and Use
 
-Open the Visual Studio project and compile. Pick `Release` unless you're debugging. This project produces a static library (in `x64/Release`) that [our vkQuake2 flavor](https://github.com/toomuchvoltage/SauRay/tree/master/vkQuake2) compiles against (needs to be dropped in `ext/lib`).
+Open the Visual Studio project and compile. Pick `Release` unless you're debugging. This produces the binary that our SourceMod plugin will talk to in `x64/Release`. When running the binary, please provide a window number via a single command line argument (default is 1): i.e. `HighOmega.exe 2`. This allows several instances to run on the same machine for different server instances and with different settings (i.e. different resolutions or debug flags).
 
 In the event that you modify raytracing shaders in `source_material/shaders`:
 * Run `spirv-compiler.bat` in the same folder

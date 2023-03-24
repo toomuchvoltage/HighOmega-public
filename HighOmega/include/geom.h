@@ -44,9 +44,9 @@ namespace HIGHOMEGA
 		public:
 			vec3 pt;
 			vec3 dir;
-			PointDirIntersection(vec3 pt,vec3 dir);
+			PointDirIntersection(vec3 pt, vec3 dir);
 		};
-		bool TriSphere(vec3 t[3], vec3 n, bool doubleSided, vec3 c, float r,std::vector <PointDirIntersection> & intersectList);
+		bool TriSphere(vec3 t[3], vec3 n, bool doubleSided, vec3 c, float r, std::vector <PointDirIntersection> & intersectList);
 		bool LineInsideOrHittingSphere(vec3 e1, vec3 e2, vec3 cent, float rad, vec3 *out1, vec3 *out2);
 		bool LineHittingSphereOnce(vec3 e1, vec3 e2, vec3 cent, float rad, vec3 *out);
 		bool PushOutSphere(vec3 t[3], vec3 s[3], vec3 n, vec3 *c, float r);
@@ -68,7 +68,9 @@ namespace HIGHOMEGA
 			vec3 normVec;
 		};
 		void MakeBox(vec3 minPt, vec3 maxPt, std::vector<TriUV> & cullGeom);
+		void MakeOrientedBox(vec3 start, vec3 fwd, vec3 up, vec3 side, std::vector<TriUV> & cullGeom);
 		void MakeCylinder(vec3 cent, vec3 norm, float rad, float height, std::vector<TriUV> & cullGeom);
+		void MakeThreeEllipsoids(vec3 cent, float radSide, float radTop, int numAngles, std::vector<TriUV> & cullGeom);
 		bool LineLine(vec3 p1, vec3 m1, vec3 p2, vec3 m2, vec3 & outp);
 		void MakeRandomEncompassingTri(vec3 aabbMin, vec3 aabbMax, TriUV & cullGeom);
 		bool SplitTri(TriUV & t1, TriUV & t2, std::vector<TriUV> & splitTris, bool splitT1);

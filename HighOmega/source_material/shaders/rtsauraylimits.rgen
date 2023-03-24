@@ -94,8 +94,8 @@ void main()
 				rayLen = 32.0;
 				break;
 			case 4:
-				eye2 = eye1 + vec3 (0.0, 0.0, -60.0);
-				rayLen = 60.0;
+				eye2 = eye1 + vec3 (0.0, 0.0, -104.0);
+				rayLen = 104.0;
 				break;
 			case 5:
 				eye2 = eye1 + vec3 (0.0, 0.0, 32.0);
@@ -144,23 +144,23 @@ void main()
 				break;
 			case 4:
 				eye1 += vec3 (16.0, 16.0, 0.0);
-				eye2 = eye1 + vec3 (0.0, 0.0, -28.0);
-				rayLen = 28.0;
+				eye2 = eye1 + vec3 (0.0, 0.0, -54.0);
+				rayLen = 54.0;
 				break;
 			case 5:
 				eye1 += vec3 (16.0, -16.0, 0.0);
-				eye2 = eye1 + vec3 (0.0, 0.0, -28.0);
-				rayLen = 28.0;
+				eye2 = eye1 + vec3 (0.0, 0.0, -54.0);
+				rayLen = 54.0;
 				break;
 			case 6:
 				eye1 += vec3 (-16.0, 16.0, 0.0);
-				eye2 = eye1 + vec3 (0.0, 0.0, -28.0);
-				rayLen = 28.0;
+				eye2 = eye1 + vec3 (0.0, 0.0, -54.0);
+				rayLen = 54.0;
 				break;
 			case 7:
 				eye1 += vec3 (-16.0, -16.0, 0.0);
-				eye2 = eye1 + vec3 (0.0, 0.0, -28.0);
-				rayLen = 28.0;
+				eye2 = eye1 + vec3 (0.0, 0.0, -54.0);
+				rayLen = 54.0;
 				break;
 		}
 

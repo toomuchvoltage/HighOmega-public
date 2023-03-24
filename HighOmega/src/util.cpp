@@ -418,7 +418,8 @@ HIGHOMEGA::LOG::~LOG()
 	std::ofstream outfile;
 	int mode = std::ofstream::out;
 	if (firstTime == false) mode |= std::ofstream::app;
-	outfile.open("highomega_log.txt", mode);
+	unsigned int curTimeSec = (unsigned int)(std::time(nullptr) / 3600);
+	outfile.open(std::string("highomega_log") + std::to_string(curTimeSec) + ".txt", mode);
 	char cur_time[256];
 	GetCurrentTimeAndDate(cur_time, 256);
 	cur_time[strlen(cur_time) - 1] = '\0';

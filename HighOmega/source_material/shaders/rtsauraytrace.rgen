@@ -53,6 +53,11 @@ struct PlayerVisData
 	uvec4 visCell;
 };
 
+layout (binding = 5) buffer PlayerVisMatrixSSBO
+{
+	PlayerVisData visData[];
+} playerVisMatrix;
+
 layout (binding = 6) uniform TimeBufUBO
 {
 	uvec4 frameCountMaxPlayersSqrtSideResTemporalHistoryAmount;
@@ -71,10 +76,11 @@ layout (binding = 7) buffer playerLimitsSSBO
 
 layout(location = 0) rayPayloadEXT struct {
 	/*
-		1 bit: 	 intersected player
-		31 bits: originating player
+		2 bits:  hitType
+		1 bit:   secondary ray flag
+		29 bits: originating player Id
 	*/
-	uint isectPlayerOrigPlayerId;
+	uint hitTypeSecFlagOrigPlayerId;
 } rayLoad;
 
 vec3 getRand (vec3 forPos)
@@ -118,6 +124,18 @@ mat3 reOrthoNormalize (mat3 inpBasis)
 	return outMat;
 }
 
+void registerPlayerHit(uint viewerPlayer, uint subjectPlayer)
+{
+	uint maxPlayers = timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.y * timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.y;
+	uint curVisCellID = subjectPlayer * maxPlayers + viewerPlayer;
+
+	uvec4 curVisCell = playerVisMatrix.visData[curVisCellID].visCell;
+	uint curTemporalBit = timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.x % timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.a;
+	uint curVisCellChannel = (curTemporalBit / 32) % 4;
+	curVisCell[curVisCellChannel] = (curVisCell[curVisCellChannel] | (0x00000001 << (curTemporalBit % 32)));
+	playerVisMatrix.visData[curVisCellID].visCell = curVisCell;
+}
+
 void main()
 {
 	uvec2 bucketPos = (gl_LaunchIDEXT.xy * timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.y) / gl_LaunchSizeEXT.xy;
@@ -125,8 +143,6 @@ void main()
 	uint curPlayerId = bucketPos.y * timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.y + bucketPos.x;
 
 	if ( bitfieldExtract(playersInfo.frusta[curPlayerId].maskEnabledReserved, 16, 8) == 0 ) return;
-
-	rayLoad.isectPlayerOrigPlayerId = bitfieldInsert (rayLoad.isectPlayerOrigPlayerId, curPlayerId & 0x7FFFFFFF, 0, 31);
 
 	uvec2 localLaunchID = gl_LaunchIDEXT.xy % timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.zz;
 	vec2 inUV = (vec2 (localLaunchID) + vec2 (0.5)) / vec2(timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.zz);
@@ -162,7 +178,8 @@ void main()
 	vec3 sideScaled = side * playersInfo.frusta[curPlayerId].geomCentYScale.a * playersInfo.frusta[curPlayerId].eye2Whr.a;
 
 	uvec2 subViewRes = uvec2 (timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.zz);
-	if ( playersInfo.frusta[curPlayerId].eye2Whr.a > 1.79 )
+	bool curPlayerLagging = playersInfo.frusta[curPlayerId].eye2Whr.a > 1.79;
+	if ( curPlayerLagging )
 	{
 		subViewRes = uvec2 (ceil (vec2 (timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.zz) * 0.333333333));
 		uvec2 subviewBucket = localLaunchID / subViewRes;
@@ -203,45 +220,52 @@ void main()
 		playerToEye = geomCent - tracePos;
 		playerToEyeDist = length(playerToEye);
 		playerToEyeNorm = playerToEye / playerToEyeDist;
-
+		
 		if ( playerToEyeDist > geomRad * subPixelDistanceScaler && dot (playerToEyeNorm, traceDir) > subPixelAngleProximity)
 			countSuperSample = max (countSuperSample, uint (playerToEyeDist / (geomRad * subPixelDistanceScaler)));
 	}
 
-	uint cachedInitialRayLoad = rayLoad.isectPlayerOrigPlayerId;
+	rayLoad.hitTypeSecFlagOrigPlayerId = curPlayerId & 0x1FFFFFFF;
+	uint cachedInitialRayLoad = rayLoad.hitTypeSecFlagOrigPlayerId;
 	uint rayFlags = gl_RayFlagsCullNoOpaqueEXT;
-	uint cullMask = bitfieldExtract(playersInfo.frusta[curPlayerId].maskEnabledReserved, 24, 8);
+	uint curPlayerMaskEnabledReserved = playersInfo.frusta[curPlayerId].maskEnabledReserved;
+	uint cullMask = bitfieldExtract(curPlayerMaskEnabledReserved, 24, 8);
 	float tmin = 0.1;
 	float tmax = 1000000.0;
-	uint hitType = 0;
+	uint hitTypeForDebug = 0;
 	for (uint i = 0; i != countSuperSample+1; i++)
 	{
-		vec3 traceDirJitter = normalize (traceDir + randVec * 0.0025);
-		traceRayEXT(topLevelAS, rayFlags, 0xFF, 0 , 0 , 0 , tracePos, tmin, traceDirJitter, tmax, 0 );
-		float newTMax = uintBitsToFloat(rayLoad.isectPlayerOrigPlayerId);
-		rayLoad.isectPlayerOrigPlayerId = cachedInitialRayLoad;
-		traceRayEXT(topLevelAS, gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullOpaqueEXT, cullMask, 0 , 0 , 0 , tracePos, tmin, traceDirJitter, newTMax, 0 );
+		rayLoad.hitTypeSecFlagOrigPlayerId = cachedInitialRayLoad;
+		traceRayEXT(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , tracePos, tmin, normalize (traceDir + randVec * 0.0025), tmax, 0 );
 		
 		randVec = getRand (randVec * 10.0);
-		
-		hitType = max (max (hitType,newTMax == tmax ? 0 : 1), bitfieldExtract(rayLoad.isectPlayerOrigPlayerId, 31, 1) << 1);
+
+		uint hitType = bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 30, 2);
+		hitTypeForDebug = max (hitTypeForDebug, hitType);
 	}
 
-	if ( localLaunchID.x < 64 && localLaunchID.y < 3 && bitfieldExtract(playersInfo.frusta[localLaunchID.x].maskEnabledReserved, 16, 8) != 0 && playersInfo.frusta[curPlayerId].eye2Whr.a > 1.79 )
+	if ( localLaunchID.x < 64 && localLaunchID.y < 3 && curPlayerLagging )
 	{
-		vec3 losEye = mix (playersInfo.frusta[localLaunchID.x].eyeGeomRad.xyz , playersInfo.frusta[localLaunchID.x].eye2Whr.xyz, float(localLaunchID.y) * 0.5);
-		vec3 traceDirLos = normalize (losEye - eye);
-		traceRayEXT(topLevelAS, rayFlags, 0xFF, 0 , 0 , 0 , eye, tmin, traceDirLos, tmax, 0);
-		float newTMax = uintBitsToFloat(rayLoad.isectPlayerOrigPlayerId);
-		rayLoad.isectPlayerOrigPlayerId = cachedInitialRayLoad;
-		traceRayEXT(topLevelAS, gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullOpaqueEXT, cullMask, 0 , 0 , 0 , eye, tmin, traceDirLos, newTMax, 0 );
+		uint targetPlayerMaskEnabledReserved = playersInfo.frusta[localLaunchID.x].maskEnabledReserved;
+		if ( bitfieldExtract(targetPlayerMaskEnabledReserved, 16, 8) != 0 )
+		{
+			bool player1TeamBoolean = (bitfieldExtract(targetPlayerMaskEnabledReserved, 28, 4) != 0);
+			bool player2TeamBoolean = (bitfieldExtract(curPlayerMaskEnabledReserved,    28, 4) != 0);
+			if (player1TeamBoolean != player2TeamBoolean)
+			{
+				rayLoad.hitTypeSecFlagOrigPlayerId = cachedInitialRayLoad;
+				vec3 losEye = mix (playersInfo.frusta[localLaunchID.x].eyeGeomRad.xyz , playersInfo.frusta[localLaunchID.x].eye2Whr.xyz, float(localLaunchID.y) * 0.5);
+				traceRayEXT(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , eye, tmin, normalize (losEye - eye), tmax, 0);
+			}
+		}
 	}
 
 	vec3 debugColor = vec3 (0.0);
-	if ( hitType == 1 )
+	if ( hitTypeForDebug == 1 )
 		debugColor = vec3 (1.0);
-	else if ( hitType == 2 )
+	else if ( hitTypeForDebug >= 2 )
 	{
+		debugColor = vec3 (1.0, 0.0, 0.0);
 		if ( countSuperSample > 0 )
 			debugColor = vec3 (0.0, 0.0, 1.0);
 		else

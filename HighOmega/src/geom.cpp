@@ -95,30 +95,30 @@ bool HIGHOMEGA::GEOM::TriTri(vec3 t1[3], vec3 & n1, vec3 t2[3], vec3 & n2, vec3 
 	{
 		base = n1.y*n2.z - n2.y*n1.z;
 		O.x = 0;
-		O.y = (D2*n1.z - D1*n2.z) / base;
-		O.z = (D1*n2.y - D2*n1.y) / base;
+		O.y = (D2*n1.z - D1 * n2.z) / base;
+		O.z = (D1*n2.y - D2 * n1.y) / base;
 	}
 	else
 		if (max_Dxyz == Dy)
 		{
 			base = n1.x*n2.z - n2.x*n1.z;
-			O.x = (D2*n1.z - D1*n2.z) / base;
+			O.x = (D2*n1.z - D1 * n2.z) / base;
 			O.y = 0;
-			O.z = (D1*n2.x - D2*n1.x) / base;
+			O.z = (D1*n2.x - D2 * n1.x) / base;
 		}
 		else
 		{
 			base = n1.x*n2.y - n2.x*n1.y;
-			O.x = (D2*n1.y - D1*n2.y) / base;
-			O.y = (D1*n2.x - D2*n1.x) / base;
+			O.x = (D2*n1.y - D1 * n2.y) / base;
+			O.y = (D1*n2.x - D2 * n1.x) / base;
 			O.z = 0;
 		}
-	float p_v10 = D*(t1[order1_0] - O);
-	float p_v11 = D*(t1[order1_1] - O);
-	float p_v12 = D*(t1[order1_2] - O);
-	float p_v20 = D*(t2[order2_0] - O);
-	float p_v21 = D*(t2[order2_1] - O);
-	float p_v22 = D*(t2[order2_2] - O);
+	float p_v10 = D * (t1[order1_0] - O);
+	float p_v11 = D * (t1[order1_1] - O);
+	float p_v12 = D * (t1[order1_2] - O);
+	float p_v20 = D * (t2[order2_0] - O);
+	float p_v21 = D * (t2[order2_1] - O);
+	float p_v22 = D * (t2[order2_2] - O);
 	float t_1[2], t_2[2];
 	t_1[0] = p_v11 + (p_v10 - p_v11)*(d_v1[order1_1] / (d_v1[order1_1] - d_v1[order1_0]));
 	t_1[1] = p_v12 + (p_v10 - p_v12)*(d_v1[order1_2] / (d_v1[order1_2] - d_v1[order1_0]));
@@ -177,7 +177,7 @@ bool HIGHOMEGA::GEOM::TriSphere(vec3 tri[3], vec3 norm, bool doubleSided, vec3 c
 {
 	vec3 nn = norm;
 
-	float distToPlane = nn*(cent - tri[0]);
+	float distToPlane = nn * (cent - tri[0]);
 
 	if (!doubleSided && distToPlane < 0.0f) return false;
 	if (doubleSided && distToPlane < 0.0f)
@@ -197,7 +197,7 @@ bool HIGHOMEGA::GEOM::TriSphere(vec3 tri[3], vec3 norm, bool doubleSided, vec3 c
 	t_c[1] = tri[1] - cent;
 	t_c[2] = tri[2] - cent;
 
-	float radSq = rad*rad;
+	float radSq = rad * rad;
 
 	bool intersectionHappened = false;
 
@@ -209,7 +209,7 @@ bool HIGHOMEGA::GEOM::TriSphere(vec3 tri[3], vec3 norm, bool doubleSided, vec3 c
 
 		if (c < 0.0f)
 		{
-			intersectList.emplace_back(tri[i],nn);
+			intersectList.emplace_back(tri[i], nn);
 			intersectionHappened = true;
 		}
 
@@ -224,12 +224,12 @@ bool HIGHOMEGA::GEOM::TriSphere(vec3 tri[3], vec3 norm, bool doubleSided, vec3 c
 
 		if (k1 >= 0.0f && k1 <= 1.0f)
 		{
-			intersectList.emplace_back(tri[i] + m[i] * k1,nn);
+			intersectList.emplace_back(tri[i] + m[i] * k1, nn);
 			intersectionHappened = true;
 		}
 		if (k2 >= 0.0f && k2 <= 1.0f)
 		{
-			intersectList.emplace_back(tri[i] + m[i] * k2,nn);
+			intersectList.emplace_back(tri[i] + m[i] * k2, nn);
 			intersectionHappened = true;
 		}
 	}
@@ -257,7 +257,7 @@ bool HIGHOMEGA::GEOM::LineInsideOrHittingSphere(vec3 e1, vec3 e2, vec3 cent, flo
 		return true;
 	}
 
-	float radSq = rad*rad;
+	float radSq = rad * rad;
 
 	float a = m * m;
 	float b = 2.0f * e1_c * m;
@@ -272,8 +272,8 @@ bool HIGHOMEGA::GEOM::LineInsideOrHittingSphere(vec3 e1, vec3 e2, vec3 cent, flo
 	float k1 = (-b + q) * denom;
 	float k2 = (-b - q) * denom;
 
-	if (k1 >= 0.0f && k1 <= 1.0f) intList.push_back (e1 + m * k1);
-	if (k2 >= 0.0f && k2 <= 1.0f) intList.push_back (e1 + m * k2);
+	if (k1 >= 0.0f && k1 <= 1.0f) intList.push_back(e1 + m * k1);
+	if (k2 >= 0.0f && k2 <= 1.0f) intList.push_back(e1 + m * k2);
 
 	if (intList.size() == 2)
 	{
@@ -429,7 +429,7 @@ bool HIGHOMEGA::GEOM::LineSegTri(vec3 & l1, vec3 & l2, vec3 & p1, vec3 & p2, vec
 	float D = -(p1*n);
 	k = -(D + (n*l1)) / (mdotn);
 	if (k < 0.0f || k > 1.0f) return false;
-	vec3 p = l1 + k*m;
+	vec3 p = l1 + k * m;
 
 	return PointInTri(p, p2, p3, s1, s2, s3);
 }
@@ -584,7 +584,7 @@ void HIGHOMEGA::GEOM::MakeBox(vec3 minPt, vec3 maxPt, std::vector<TriUV>& cullGe
 	newT.uvArr[2] = vec2(0.0f, 1.0f);
 	cullGeom.push_back(newT);
 
-//----------------------------------------
+	//----------------------------------------
 
 	newT.normVec = vec3(-1.0f, 0.0f, 0.0f);
 
@@ -661,10 +661,128 @@ void HIGHOMEGA::GEOM::MakeBox(vec3 minPt, vec3 maxPt, std::vector<TriUV>& cullGe
 	cullGeom.push_back(newT);
 }
 
+void HIGHOMEGA::GEOM::MakeOrientedBox(vec3 start, vec3 fwd, vec3 up, vec3 side, std::vector<TriUV>& cullGeom)
+{
+	TriUV newT;
+	newT.normVec = vec3(0.0f, 1.0f, 0.0f);
+
+	vec3 c01 = start - up - side;
+	vec3 c02 = start - side + up;
+	vec3 c03 = start + up + side;
+	vec3 c04 = start - up + side;
+
+	vec3 c11 = c01 + fwd;
+	vec3 c12 = c02 + fwd;
+	vec3 c13 = c03 + fwd;
+	vec3 c14 = c04 + fwd;
+
+	newT.eArr[0] = c01;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c02;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c03;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+
+	newT.eArr[0] = c01;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c04;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c03;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+	//------------------------------
+
+	newT.eArr[0] = c11;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c12;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c13;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+
+	newT.eArr[0] = c11;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c14;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c13;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+	//------------------------------
+
+	newT.eArr[0] = c01;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c02;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c12;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+
+	newT.eArr[0] = c01;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c11;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c12;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+	//------------------------------
+
+	newT.eArr[0] = c03;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c13;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c14;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+
+	newT.eArr[0] = c03;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c04;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c14;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+	//------------------------------
+
+	newT.eArr[0] = c02;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c12;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c13;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+
+	newT.eArr[0] = c02;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c03;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c13;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+	//------------------------------
+
+	newT.eArr[0] = c01;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c11;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c14;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+
+	newT.eArr[0] = c01;
+	newT.uvArr[0] = vec2(1.0f, 0.0f);
+	newT.eArr[1] = c04;
+	newT.uvArr[1] = vec2(1.0f, 1.0f);
+	newT.eArr[2] = c14;
+	newT.uvArr[2] = vec2(0.0f, 1.0f);
+	cullGeom.push_back(newT);
+	//------------------------------
+}
+
 void HIGHOMEGA::GEOM::MakeCylinder(vec3 cent, vec3 norm, float rad, float height, std::vector<TriUV>& cullGeom)
 {
 	std::vector<vec3> allOnPlaneNorms;
-	vec3 X = cross(norm, norm + vec3 (0.1f)).normalized();
+	vec3 X = cross(norm, norm + vec3(0.1f)).normalized();
 	float angleChunk = HIGHOMEGA_PI * 0.4f;
 	float angleVar = HIGHOMEGA_PI * 0.16666667f;
 
@@ -686,7 +804,7 @@ void HIGHOMEGA::GEOM::MakeCylinder(vec3 cent, vec3 norm, float rad, float height
 		vec3 curTan = (allOnPlaneNorms[nextIndex] - allOnPlaneNorms[i]).normalized();
 
 		TriUV curFace;
-		curFace.normVec = cross (curTan, norm);
+		curFace.normVec = cross(curTan, norm);
 		if (allOnPlaneNorms[i] * curFace.normVec < 0.0f) curFace.normVec = -curFace.normVec;
 
 		curFace.eArr[0] = cent + allOnPlaneNorms[i] * rad - norm * height;
@@ -726,6 +844,53 @@ void HIGHOMEGA::GEOM::MakeCylinder(vec3 cent, vec3 norm, float rad, float height
 	}
 }
 
+void HIGHOMEGA::GEOM::MakeThreeEllipsoids(vec3 cent, float radSide, float radTop, int numAngles, std::vector<TriUV>& cullGeom)
+{
+	float curAngle = HIGHOMEGA_PI * 0.5f;
+	float deltaAngle = (HIGHOMEGA_PI * 2.0f) / (float)numAngles;
+	for (int repeat = 0; repeat != 3; repeat++)
+	{
+		TriUV curTri;
+		switch (repeat)
+		{
+		case 0:
+			curTri.normVec = vec3(-1.0f, 0.0f, 0.0f);
+			break;
+		case 1:
+			curTri.normVec = vec3(0.0f, 0.0f, 1.0f);
+			break;
+		case 2:
+			curTri.normVec = vec3(0.0f, -1.0f, 0.0f);
+			break;
+		}
+		for (int i = 0; i != numAngles; i++)
+		{
+			curTri.eArr[0] = cent;
+			switch (repeat)
+			{
+			case 0:
+				curTri.eArr[1] = cent + vec3(0.0f, sinf(curAngle) * radSide, cosf(curAngle) * radTop);
+				curTri.eArr[2] = cent + vec3(0.0f, sinf(curAngle + deltaAngle) * radSide, cosf(curAngle + deltaAngle) * radTop);
+				break;
+			case 1:
+				curTri.eArr[1] = cent + vec3(cosf(curAngle) * radSide, sinf(curAngle) * radSide, 0.0f);
+				curTri.eArr[2] = cent + vec3(cosf(curAngle + deltaAngle) * radSide, sinf(curAngle + deltaAngle) * radSide, 0.0f);
+				break;
+			case 2:
+				curTri.eArr[1] = cent + vec3(sinf(curAngle) * radSide, 0.0f, cosf(curAngle) * radTop);
+				curTri.eArr[2] = cent + vec3(sinf(curAngle + deltaAngle) * radSide, 0.0f, cosf(curAngle + deltaAngle) * radTop);
+				break;
+			}
+			curTri.uvArr[0] = vec2(0.0f);
+			curTri.uvArr[1] = vec2(0.0f, 1.0f);
+			curTri.uvArr[2] = vec2(1.0f);
+			curTri.colArr[0] = curTri.colArr[1] = curTri.colArr[2] = vec3(0.0f);
+			curAngle += deltaAngle;
+			cullGeom.push_back(curTri);
+		}
+	}
+}
+
 bool HIGHOMEGA::GEOM::LineLine(vec3 p1, vec3 m1, vec3 p2, vec3 m2, vec3 & outp)
 {
 	float denom;
@@ -761,13 +926,13 @@ void HIGHOMEGA::GEOM::MakeRandomEncompassingTri(vec3 aabbMin, vec3 aabbMax, TriU
 	vec3 aabbCent = (aabbMin + aabbMax) * 0.5f;
 	float aabbRad = (aabbMax - aabbCent).length();
 
-	fractInBox = vec3((rand() % 100) * 0.01f, (rand() % 100) * 0.01f, (rand() % 100) * 0.01f) * 0.5f + vec3 (0.25f);
+	fractInBox = vec3((rand() % 100) * 0.01f, (rand() % 100) * 0.01f, (rand() % 100) * 0.01f) * 0.5f + vec3(0.25f);
 	ptInside = aabbMin + fractInBox * (aabbMax - aabbMin);
-	cutPlaneNorm = vec3 ((rand() % 100 - 50) * 0.02f, (rand() % 100 - 50) * 0.02f, (rand() % 100 - 50) * 0.02f).normalized();
+	cutPlaneNorm = vec3((rand() % 100 - 50) * 0.02f, (rand() % 100 - 50) * 0.02f, (rand() % 100 - 50) * 0.02f).normalized();
 	vec3 toCent = ptInside - aabbCent;
 	vec3 toCentNorm = toCent.normalized();
 
-	vec3 vecOnPlane = cross (cutPlaneNorm, vec3((rand() % 100 - 50) * 0.02f, (rand() % 100 - 50) * 0.02f, (rand() % 100 - 50) * 0.02f)).normalized();
+	vec3 vecOnPlane = cross(cutPlaneNorm, vec3((rand() % 100 - 50) * 0.02f, (rand() % 100 - 50) * 0.02f, (rand() % 100 - 50) * 0.02f)).normalized();
 	vec3 p1 = ptInside + vecOnPlane * aabbRad * 2 * SIDE_SCALER;
 	vec3 m1 = cross(p1 - ptInside, cutPlaneNorm);
 	vecOnPlane = Spin(cutPlaneNorm, vecOnPlane, 0.66666666667f * HIGHOMEGA_PI);
@@ -1025,7 +1190,7 @@ void HIGHOMEGA::GEOM::ComputeSideNorms(std::vector<TriUV>& allTris, std::vector<
 bool HIGHOMEGA::GEOM::InsideTest(vec3 pt, std::vector<TriUV>& allTris, std::vector<vec3>& sideNorms)
 {
 	vec3 pt1 = pt;
-	vec3 pt2 = pt - vec3 (0.0f, 0.0f, 1000.0f);
+	vec3 pt2 = pt - vec3(0.0f, 0.0f, 1000.0f);
 	vec3 pt3 = pt - vec3(0.0f, 1000.0f, 0.0f);
 	vec3 pt4 = pt - vec3(1000.0f, 0.0f, 0.0f);
 
