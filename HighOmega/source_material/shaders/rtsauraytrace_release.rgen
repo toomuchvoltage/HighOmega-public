@@ -1,0 +1,235 @@
+/*
+	Copyright © 2023 TooMuchVoltage Software Inc. This notice shall always be coupled with any SauRay(TM) implementation and must be redistributed alongside it.
+
+	This implementation of US20220219086A1 is provided royalty free for either of the following:
+
+	* Games with gross revenues of under one(1) million dollars CAD.
+	* Games with at least a publically distributed moddable server binary with which SauRay(TM) is successfully integrable.
+
+	Public distribution requires either a public download link or a relatively simple registration and download process. If you are unsure of your registration process's straightforwardness, reach out directly.
+
+	Free open-source games (i.e. Cube/Sauerbraten or Xonotic) automatically qualify since successful SauRay(TM) integration is ultimately feasible with sufficient effort.
+
+	Open source games with non-Libre licenses (i.e. non-GPL, non-MIT) also qualify as long as the license is no further restrictive than that of Quake(idTech) II's. If unsure of whether your source code redistribution license is permissive enough, please reach out directly.
+
+	For games where at least the distributed server component is either open-source or moddable (in a manner permissible by the IP owner) the game must be sufficiently thin-client so that a SauRay(TM) integration does not result in crashes or defects that largely break the game in most multiplayer game modes. If you are unsure of whether your distributed binaries qualify for this category, please get in touch directly.
+
+	We can be reached at the email address: sauray@toomuchvoltage.com or using the contact information found on the website http://sauray.tech .
+
+	If your game does not qualify under either of the above categories, contact us for a commercial license. The covered source files are protected by copyright and the aforementioned terms will apply beyond the life of US20220219086A1.
+
+	All games using US20220219086A1 or this implementation of it must clearly declare that they're using it in a way noticeable and comprehensible by an average player of the game in the English language.
+
+	Beyond what is stated in http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf this source code does not provide any warranties of merchantability or fitness for any particular purpose.
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_scalar_block_layout : require
+
+#define M_PI 3.1415926535
+
+layout (binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
+
+layout (binding = 1, rgba8) uniform writeonly image2D testOutput;
+layout (binding = 2) uniform sampler2D blueNoise;
+
+struct PlayerFrustum
+{
+	vec4 eyeGeomRad;
+	vec4 eye2Whr;
+	vec4 lookUpLook2Up2;
+	vec4 geomCentYScale;
+	uint maskEnabledReserved;
+};
+
+layout (scalar, binding = 4) buffer playersInfoSSBO
+{
+	PlayerFrustum frusta[];
+} playersInfo;
+
+struct PlayerVisData
+{
+	uvec4 visCell;
+};
+
+layout (binding = 6) uniform TimeBufUBO
+{
+	uvec4 frameCountMaxPlayersSqrtSideResTemporalHistoryAmount;
+} timeBuf;
+
+struct playerLimit
+{
+	float aabbLim[20];
+	float corners[24];
+};
+
+layout (binding = 7) buffer playerLimitsSSBO
+{
+	playerLimit limits[];
+} playerLimits;
+
+layout(location = 0) rayPayloadEXT struct {
+	/*
+		32 bits: originating player
+	*/
+	uint origPlayerId;
+} rayLoad;
+
+vec3 getRand (vec3 forPos)
+{
+    float rx = fract(sin(dot(forPos, vec3(-92.9898,  48.233,  16.1938))) * 43758.5453);
+    float ry = fract(cos(dot(forPos, vec3( 17.1948,  70.963, -44.0687))) * 43758.5453);
+    float rz = fract(sin(dot(forPos, vec3( 59.4233, -36.248,  43.5856))) * 93758.5453);
+    
+    return (vec3 (rx,ry,rz) - vec3 (0.5))* 2.0;
+}
+
+vec3 toVec3(vec2 inpVec)
+{
+	float phi = inpVec.x * (2.0 * M_PI);
+	float theta = inpVec.y * M_PI;
+	float sinTheta = sin(theta);
+	return vec3 (cos(phi) * sinTheta, cos(theta), sin(phi) * sinTheta);
+}
+
+vec2 unpackSpherical(float inpPack)
+{
+	uint packInt = floatBitsToUint(inpPack);
+	vec2 retVal;
+	retVal.x = float((packInt & 0xFFFF0000) >> 16) / 65535.0;
+	retVal.y = float(packInt & 0x0000FFFF) / 65535.0;
+	return retVal;
+}
+
+mat3 reOrthoNormalize (mat3 inpBasis)
+{
+	mat3 outMat;
+	
+	outMat[2] = normalize (inpBasis[2]);
+	
+	vec3 newBiTan = normalize (cross (outMat[2], inpBasis[0]));
+	outMat[1] = newBiTan * sign(dot (inpBasis[1], newBiTan));
+
+	vec3 newTan = cross (outMat[2], outMat[1]);
+	outMat[0] = newTan * sign(dot (inpBasis[0], newTan));
+	
+	return outMat;
+}
+
+void main()
+{
+	uvec2 bucketPos = (gl_LaunchIDEXT.xy * timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.y) / gl_LaunchSizeEXT.xy;
+
+	uint curPlayerId = bucketPos.y * timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.y + bucketPos.x;
+
+	if ( bitfieldExtract(playersInfo.frusta[curPlayerId].maskEnabledReserved, 16, 8) == 0 ) return;
+
+	rayLoad.origPlayerId = curPlayerId;
+
+	uvec2 localLaunchID = gl_LaunchIDEXT.xy % timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.zz;
+	vec2 inUV = (vec2 (localLaunchID) + vec2 (0.5)) / vec2(timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.zz);
+	vec2 uvDeNorm = inUV * 2.0 - vec2 (1.0);
+
+	vec3 eye1 = playersInfo.frusta[curPlayerId].eyeGeomRad.xyz;
+	vec3 look1 = toVec3 (unpackSpherical (playersInfo.frusta[curPlayerId].lookUpLook2Up2.x));
+	vec3 up1 = toVec3 (unpackSpherical (playersInfo.frusta[curPlayerId].lookUpLook2Up2.y));
+
+	vec3 eye2 = playersInfo.frusta[curPlayerId].eye2Whr.xyz;
+	vec3 look2 = toVec3 (unpackSpherical (playersInfo.frusta[curPlayerId].lookUpLook2Up2.z));
+	vec3 up2 = toVec3 (unpackSpherical (playersInfo.frusta[curPlayerId].lookUpLook2Up2.w));
+	
+	vec3 randVec = getRand (vec3 (inUV.x, inUV.y * inUV.x, inUV.y) * vec3(timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.x) * vec3 (2.5, 1.75, 3.0));
+	float mixAmount = (randVec.x + 1.0) * 0.5;
+
+	vec3 eye = mix(eye1, eye2, mixAmount);
+	vec3 look = mix(look1, look2, mixAmount);
+	vec3 up = mix(up1, up2, mixAmount);
+	vec3 side = cross (up, look);
+	mat3 lookMat;
+	lookMat[0] = side;
+	lookMat[1] = up;
+	lookMat[2] = look;
+	lookMat = reOrthoNormalize (lookMat);
+	side = lookMat[0];
+	up = lookMat[1];
+	look = lookMat[2];
+	
+	randVec = getRand (randVec * 10.0);
+	
+	vec3 upScaled = up * playersInfo.frusta[curPlayerId].geomCentYScale.a;
+	vec3 sideScaled = side * playersInfo.frusta[curPlayerId].geomCentYScale.a * playersInfo.frusta[curPlayerId].eye2Whr.a;
+
+	uvec2 subViewRes = uvec2 (timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.zz);
+	if ( playersInfo.frusta[curPlayerId].eye2Whr.a > 1.79 )
+	{
+		subViewRes = uvec2 (ceil (vec2 (timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.zz) * 0.333333333));
+		uvec2 subviewBucket = localLaunchID / subViewRes;
+		uint subviewId = subviewBucket.y * 3 + subviewBucket.x;
+		vec3 subviewEye;
+		if (subviewId != 0)
+			subviewEye = vec3 (playerLimits.limits[curPlayerId].corners[(subviewId - 1) * 3],
+							   playerLimits.limits[curPlayerId].corners[(subviewId - 1) * 3 + 1],
+							   playerLimits.limits[curPlayerId].corners[(subviewId - 1) * 3 + 2]);
+		else
+			subviewEye = eye1;
+		eye = subviewEye + (eye - eye1);
+		localLaunchID %= subViewRes;
+		uvDeNorm = (vec2 (localLaunchID) / vec2 (subViewRes)) * 2.0 - vec2 (1.0);
+	}
+
+	vec3 tracePos = eye;
+	vec3 traceDir = normalize (look - (uvDeNorm.y * upScaled) - (uvDeNorm.x * sideScaled));
+	
+	uint maxPlayers = timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.y * timeBuf.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount.y;
+	
+	float subPixelScaler = float (subViewRes.x) / 160.0;
+	float subPixelDistanceScaler = subPixelScaler * 35.0;
+	float subPixelAngleProximity = 0.9998 + clamp (subPixelScaler - 1.0, 0.0, 10.0) * 0.00001;
+	bool subPixelDetect = false;
+	
+	vec3 geomCent, geomDiff;
+	float geomRad;
+	vec3 playerToEye, playerToEyeNorm;
+	float playerToEyeDist;
+	uint countSuperSample = 0;
+	for (int i = 0; i != maxPlayers; i++)
+	{
+		if ( bitfieldExtract(playersInfo.frusta[i].maskEnabledReserved, 16, 8) == 0 || i == curPlayerId ) continue;
+
+		geomCent = playersInfo.frusta[i].geomCentYScale.xyz;
+		geomRad = max (playersInfo.frusta[i].eyeGeomRad.a, 37.0);
+		playerToEye = geomCent - tracePos;
+		playerToEyeDist = length(playerToEye);
+		playerToEyeNorm = playerToEye / playerToEyeDist;
+		
+		if ( playerToEyeDist > geomRad * subPixelDistanceScaler && dot (playerToEyeNorm, traceDir) > subPixelAngleProximity)
+			countSuperSample = max (countSuperSample, uint (playerToEyeDist / (geomRad * subPixelDistanceScaler)));
+	}
+
+	uint cachedInitialRayLoad = rayLoad.origPlayerId;
+	uint rayFlags = gl_RayFlagsCullNoOpaqueEXT;
+	uint cullMask = bitfieldExtract(playersInfo.frusta[curPlayerId].maskEnabledReserved, 24, 8);
+	float tmin = 0.1;
+	float tmax = 1000000.0;
+	for (uint i = 0; i != countSuperSample+1; i++)
+	{
+		vec3 traceDirJitter = normalize (traceDir + randVec * 0.0025);
+		traceRayEXT(topLevelAS, rayFlags, 0xFF, 0 , 0 , 0 , tracePos, tmin, traceDirJitter, tmax, 0 );
+		float newTMax = uintBitsToFloat(rayLoad.origPlayerId);
+		rayLoad.origPlayerId = cachedInitialRayLoad;
+		traceRayEXT(topLevelAS, gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullOpaqueEXT, cullMask, 0 , 0 , 0 , tracePos, tmin, traceDirJitter, newTMax, 0 );
+		
+		randVec = getRand (randVec * 10.0);
+	}
+
+	if ( localLaunchID.x < 64 && localLaunchID.y < 3 && bitfieldExtract(playersInfo.frusta[localLaunchID.x].maskEnabledReserved, 16, 8) != 0 && playersInfo.frusta[curPlayerId].eye2Whr.a > 1.79 )
+	{
+		vec3 losEye = mix (playersInfo.frusta[localLaunchID.x].eyeGeomRad.xyz , playersInfo.frusta[localLaunchID.x].eye2Whr.xyz, float(localLaunchID.y) * 0.5);
+		vec3 traceDirLos = normalize (losEye - eye);
+		traceRayEXT(topLevelAS, rayFlags, 0xFF, 0 , 0 , 0 , eye, tmin, traceDirLos, tmax, 0);
+		float newTMax = uintBitsToFloat(rayLoad.origPlayerId);
+		rayLoad.origPlayerId = cachedInitialRayLoad;
+		traceRayEXT(topLevelAS, gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullOpaqueEXT, cullMask, 0 , 0 , 0 , eye, tmin, traceDirLos, newTMax, 0 );
+	}
+}
