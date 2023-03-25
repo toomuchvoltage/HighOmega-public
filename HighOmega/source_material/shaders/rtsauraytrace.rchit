@@ -118,7 +118,7 @@ void main()
 		{
 			vec3 hitPos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * (gl_HitTEXT - 0.15);
 
-			rayFlags = gl_RayFlagsCullNoOpaqueEXT;
+			rayFlags = gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullOpaqueEXT; // Source1 engine's shadows leak through geometry and supplant lightmaps
 			tmin = 0.1;
 			tmax = 1000000.0;
 			traceRayEXT(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , hitPos, tmin, sun.dir.xyz, tmax, 0 );

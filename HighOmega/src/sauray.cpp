@@ -901,7 +901,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				case FEED_MAP:
 				{
 					FeedMapParams *curParams = (FeedMapParams *)CDSEnvelope->lpData;
-					return (LRESULT)sauray_feedmap_quake2((char *)(std::string ("csgo/") + std::string(curParams->mapName)).c_str());
+					return (LRESULT)sauray_feedmap_quake2((char *)(std::string ("tf2/") + std::string(curParams->mapName)).c_str());
 				}
 				case REMOVE_PLAYER:
 				{

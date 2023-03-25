@@ -84,8 +84,12 @@ void main()
 
 	if ( hitPlayerId != 0xFFFFFFFF )
 	{
-		registerPlayerHit (originatingPlayerId, hitPlayerId);
-		rayLoad.hitTypeSecFlagOrigPlayerId = bitfieldInsert (rayLoad.hitTypeSecFlagOrigPlayerId, bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 29, 1) + 2, 30, 2);
+		bool primaryRay = bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 29, 1) == 0;
+		if ( primaryRay || (!primaryRay && gl_HitTEXT < 72.0) ) // In Source1 even though shadows leak through walls... they fade beyond a certain distance (comparable to a player's height).
+		{
+			registerPlayerHit (originatingPlayerId, hitPlayerId);
+			rayLoad.hitTypeSecFlagOrigPlayerId = bitfieldInsert (rayLoad.hitTypeSecFlagOrigPlayerId, bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 29, 1) + 2, 30, 2);
+		}
 	}
 	ignoreIntersectionEXT;
 }
