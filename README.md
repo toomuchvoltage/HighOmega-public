@@ -43,6 +43,10 @@ Source1 is a 32 bit engine and thus native SourceMod extensions will have to be 
 
 Vulkan SDK and Visual Studio 2022 are required to compile. A video card with hardware accelerated ray-tracing is required. Note that with increased player count, raytracing and compute demands of the card increase. Currently our implementation can host a single competitive match per an RTX 2080Ti at 128 ticks/second or two at 64 ticks/second with a 640x640 resolution for every player.
 
+# Extracted Maps
+
+Any maps extracted using the content creation pipeline outlined [here](https://github.com/toomuchvoltage/SauRay/tree/master/TF2) must be placed in `assets/maps/tf2`. Currently `koth_badlands.bsp` is converted and can be found as `koth_badlands.txt` in that directory. This implies that this content is only sufficient for the badlands maps and only in the King of The Hill gameplay mode. Extract more content to support more modes/maps! All other converted maps should also have the `.txt` extension.
+
 # How to Compile and Use
 
 Open the Visual Studio project and compile. Pick `Release` unless you're debugging. This produces the binary that our SourceMod plugin will talk to in `x64/Release`. When running the binary, please provide a window number via a single command line argument (default is 1): i.e. `HighOmega.exe 2`. This allows several instances to run on the same machine for different server instances and with different settings (i.e. different resolutions or debug flags). Ensure that SauRay<sup>TM</sup> is running before the server is launched as TF2's `srcds` does not have hibernation like CS:GO's and will run the server loop even if there are no players present on the server.
