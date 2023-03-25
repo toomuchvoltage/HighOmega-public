@@ -6,6 +6,7 @@ If you are unfamiliar with SauRay<sup>TM</sup>, please read [our technical brief
 
 # License
 
+The point of this license is protection and not to be rampantly litigious. If you are really worried about reading patented source code: it's `sauray.cpp`, clearly marked parts of `render.cpp` and the raytracing shaders.
 Implementation details pertaining to SauRay<sup>TM</sup> are covered under [US20220219086A1](https://patents.google.com/patent/US20220219086A1) and are provided under the following license:
 
 ```
