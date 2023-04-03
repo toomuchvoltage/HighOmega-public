@@ -510,6 +510,7 @@ namespace HIGHOMEGA
 			unsigned long long sourceSDFBVHId;
 
 			void DestroySubmissionData();
+			std::string GenerateRasterPSOKey(MeshMaterial & inpMat, PipelineFlags& inpPFlags, bool renderMode);
 
 		public:
 			RasterletClass Rasterlet;
@@ -518,7 +519,7 @@ namespace HIGHOMEGA
 			std::vector <InstanceProperties> SSBOdata;
 
 			std::unordered_map <MeshMaterial, std::vector<GeometryClass *>, MeshMaterialHash> entireMatGeomMap;
-			static std::unordered_map < GroupedRasterSubmission *, std::unordered_map <std::string, DescriptorSets *>> globalDSCache;
+			static std::unordered_map <GroupedRasterSubmission *, std::unordered_map <std::string, std::unordered_map <std::string, DescriptorSets *>>> globalDSCache;
 			static std::mutex globalDSCache_mutex;
 			std::vector <MaterialGeomPairing> MaterialGeomPairings;
 			std::vector <PSO_DSL_DS_GeomPairing> PSO_DSL_DS_GeomPairings;
