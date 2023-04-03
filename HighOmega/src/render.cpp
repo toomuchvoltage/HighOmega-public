@@ -211,13 +211,14 @@ void HIGHOMEGA::RENDER::MeshMaterial::ReduceClaims()
 	if (removedASampler)
 	{
 		std::lock_guard<std::mutex> lk2(GroupedRasterSubmission::globalDSCache_mutex);
-		for (std::pair <GroupedRasterSubmission * const, std::unordered_map <std::string, DescriptorSets *>> & curPair : GroupedRasterSubmission::globalDSCache)
+		for (std::pair <GroupedRasterSubmission* const, std::unordered_map <std::string, std::unordered_map <std::string, DescriptorSets *>>> & curSubToAllPSODS : GroupedRasterSubmission::globalDSCache)
 		{
-			if (curPair.second.find(matStringKey) == curPair.second.end()) continue;
-			delete curPair.second[matStringKey];
-			curPair.second.erase(matStringKey);
-			curPair.first->resourcesChanged = true;
-			curPair.first->redoSubmissionData = true;
+			if (curSubToAllPSODS.second.find(matStringKey) == curSubToAllPSODS.second.end()) continue;
+			for (std::pair <std::string const, DescriptorSets*>& curAllPSODS : curSubToAllPSODS.second[matStringKey])
+				delete curAllPSODS.second;
+			curSubToAllPSODS.second.erase(matStringKey);
+			curSubToAllPSODS.first->resourcesChanged = true;
+			curSubToAllPSODS.first->redoSubmissionData = true;
 		}
 	}
 }
@@ -1838,7 +1839,7 @@ HIGHOMEGA::RENDER::GroupedRenderSubmission::GroupedRenderSubmission()
 {
 }
 
-std::unordered_map <GroupedRasterSubmission *, std::unordered_map <std::string, DescriptorSets *>> GroupedRasterSubmission::globalDSCache;
+std::unordered_map <GroupedRasterSubmission*, std::unordered_map <std::string, std::unordered_map <std::string, DescriptorSets*>>> GroupedRasterSubmission::globalDSCache;
 std::mutex GroupedRasterSubmission::globalDSCache_mutex;
 
 void HIGHOMEGA::RENDER::GroupedRasterSubmission::DestroySubmissionData()
@@ -1851,6 +1852,34 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::DestroySubmissionData()
 	// SSBO used to be destroyed here... but now is just naturally destroyed when the submission is destroyed
 	PSO_DSL_DS_GeomPairings.clear();
 	Rasterlet.ResetRasterlet();
+}
+
+std::string HIGHOMEGA::RENDER::GroupedRasterSubmission::GenerateRasterPSOKey(MeshMaterial& inpMat, PipelineFlags& inpPFlags, bool renderMode)
+{
+	std::string selShaderName = inpMat.shaderName;
+	if (shaders.find(inpMat.shaderName) == shaders.end()) {
+		selShaderName = "default";
+	}
+
+	std::string rasterPSOKey = "";
+	rasterPSOKey += shaders[selShaderName]->vertex_shader;
+	rasterPSOKey += shaders[selShaderName]->tc_shader;
+	rasterPSOKey += shaders[selShaderName]->te_shader;
+	rasterPSOKey += shaders[selShaderName]->geom_shader,
+	rasterPSOKey += shaders[selShaderName]->fragment_shader;
+	rasterPSOKey += std::to_string(inpPFlags.backFaceCulling);
+	rasterPSOKey += std::to_string(inpPFlags.frontFaceCulling);
+	rasterPSOKey += std::to_string(inpPFlags.frontFaceClockWise);
+	rasterPSOKey += std::to_string(inpPFlags.blendEnable);
+	rasterPSOKey += (std::to_string(inpPFlags.alphaBlendOp) + std::to_string(inpPFlags.alphaBlending));
+	rasterPSOKey += (std::to_string(inpPFlags.colorBlendOp) + std::to_string(inpPFlags.colorBlending));
+	rasterPSOKey += (std::to_string(inpPFlags.srcColorFactor) + std::to_string(inpPFlags.srcAlphaFactor));
+	rasterPSOKey += (std::to_string(inpPFlags.srcAlphaFactor) + std::to_string(inpPFlags.dstAlphaFactor));
+	rasterPSOKey += (std::to_string(inpPFlags.redMask) + std::to_string(inpPFlags.greenMask) + std::to_string(inpPFlags.blueMask) + std::to_string(inpPFlags.alphaMask));
+	rasterPSOKey += std::to_string(inpPFlags.depthTest);
+	rasterPSOKey += std::to_string(inpPFlags.depthWrite);
+	rasterPSOKey += std::to_string(renderMode);
+	return rasterPSOKey;
 }
 
 HIGHOMEGA::RENDER::GroupedRasterSubmission::GroupedRasterSubmission()
@@ -1887,8 +1916,9 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Create(InstanceClass & ptrToIns
 HIGHOMEGA::RENDER::GroupedRasterSubmission::~GroupedRasterSubmission()
 {
 	{std::lock_guard<std::mutex>lk(globalDSCache_mutex);
-	for (std::pair <const std::string, DescriptorSets *> & curDS : globalDSCache[this])
-		delete curDS.second;
+	for (std::pair <const std::string, std::unordered_map <std::string, DescriptorSets*>>& curAllPSODS : globalDSCache[this])
+		for (std::pair <const std::string, DescriptorSets*>& curDS : curAllPSODS.second)
+			delete curDS.second;
 	globalDSCache.erase(this);}
 	if (cullingCompute) delete cullingCompute;
 	if (cullingResourceSet) delete cullingResourceSet;
@@ -2375,13 +2405,7 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 			for (ShaderResource & curRes : shaderResources)
 				curResourcesRequested += curRes.ResourceCount();
 
-			RasterPSOKey rasterPSOKey(shaders[selShaderName]->vertex_shader,
-				shaders[selShaderName]->tc_entry,
-				shaders[selShaderName]->te_entry,
-				shaders[selShaderName]->geom_shader,
-				shaders[selShaderName]->fragment_shader,
-				pFlags,
-				frameBuffer->getRenderMode());
+			std::string rasterPSOKey = GenerateRasterPSOKey(curMat, pFlags, frameBuffer->getRenderMode());
 
 			Raster_PSO_DSL *RasterPSODSL = nullptr;
 			{
@@ -2399,10 +2423,10 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 			{
 				std::lock_guard<std::mutex>lk(globalDSCache_mutex);
 				std::string matStringKey = curMatGeomPairing.mat.diffName + curMatGeomPairing.mat.nrmName + curMatGeomPairing.mat.spcName + curMatGeomPairing.mat.rghName + curMatGeomPairing.mat.hgtName;
-				if (globalDSCache[this].find(matStringKey) == globalDSCache[this].end())
+				if (globalDSCache[this].find(matStringKey) == globalDSCache[this].end() || globalDSCache[this][matStringKey].find(rasterPSOKey) == globalDSCache[this][matStringKey].end())
 				{
-					globalDSCache[this][matStringKey] = new DescriptorSets(RasterPSODSL->DSL);
-					globalDSCache[this][matStringKey]->WriteDescriptorSets(shaderResources);
+					globalDSCache[this][matStringKey][rasterPSOKey] = new DescriptorSets(RasterPSODSL->DSL);
+					globalDSCache[this][matStringKey][rasterPSOKey]->WriteDescriptorSets(shaderResources);
 				}
 				else if (resourcesChanged)
 				{
@@ -2431,14 +2455,14 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, 0, takenMatGeomBindings->SSBO);
 						}
 
-						globalDSCache[this][matStringKey]->UpdateDescriptorSets(shaderResources);
+						globalDSCache[this][matStringKey][rasterPSOKey]->UpdateDescriptorSets(shaderResources);
 					}
 					else
 					{
-						globalDSCache[this][matStringKey]->RewriteDescriptorSets(shaderResources);
+						globalDSCache[this][matStringKey][rasterPSOKey]->RewriteDescriptorSets(shaderResources);
 					}
 				}
-				DSPtr = globalDSCache[this][matStringKey];
+				DSPtr = globalDSCache[this][matStringKey][rasterPSOKey];
 			}
 			resourcesRequested = curResourcesRequested;
 			PSO_DSL_DS_GeomPairing curPairing;

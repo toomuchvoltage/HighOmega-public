@@ -39,7 +39,7 @@ namespace HIGHOMEGA::GL
 	std::mutex mem_manager_mutex;
 }
 
-std::unordered_map<RasterPSOKey, Raster_PSO_DSL, RasterPSOKeyHash> HIGHOMEGA::GL::globalRaster_PSO_DSL_Cache;
+std::unordered_map<std::string, Raster_PSO_DSL> HIGHOMEGA::GL::globalRaster_PSO_DSL_Cache;
 std::mutex HIGHOMEGA::GL::globalRaster_PSO_DSL_Cache_mutex;
 std::unordered_map<std::string, Compute_PSO_DSL> HIGHOMEGA::GL::globalCompute_PSO_DSL_Cache;
 std::mutex HIGHOMEGA::GL::globalCompute_PSO_DSL_Cache_mutex;
@@ -336,7 +336,7 @@ void InstanceClass::RemovePast()
 
 	CreateSwapChainRemovePast();
 
-	for (std::pair<const RasterPSOKey, Raster_PSO_DSL> & curPSODSL : globalRaster_PSO_DSL_Cache)
+	for (std::pair<const std::string, Raster_PSO_DSL> & curPSODSL : globalRaster_PSO_DSL_Cache)
 	{
 		delete curPSODSL.second.DSL;
 		delete curPSODSL.second.PSO;
@@ -1251,43 +1251,6 @@ std::vector<ShaderResource> & HIGHOMEGA::GL::ShaderResourceSet::getAdditionalRes
 HIGHOMEGA::GL::ShaderResourceSet::~ShaderResourceSet()
 {
 	RemovePast();
-}
-
-HIGHOMEGA::GL::RasterPSOKey::RasterPSOKey(std::string & inp_vertex_shader, std::string & inp_tc_shader, std::string & inp_te_shader, std::string & inp_geom_shader, std::string & inp_fragment_shader, PipelineFlags & inpPipelineFlags, RENDER_MODE inpRenderMode)
-{
-	vertex_shader = inp_vertex_shader;
-	tc_shader = inp_tc_shader;
-	te_shader = inp_te_shader;
-	geom_shader = inp_geom_shader;
-	fragment_shader = inp_fragment_shader;
-	pipelineFlags = inpPipelineFlags;
-	renderMode = inpRenderMode;
-}
-
-bool HIGHOMEGA::GL::RasterPSOKey::operator==(const RasterPSOKey & other) const
-{
-	return vertex_shader == other.vertex_shader &&
-		tc_shader == other.tc_shader &&
-		te_shader == other.te_shader &&
-		geom_shader == other.geom_shader &&
-		fragment_shader == other.fragment_shader &&
-		pipelineFlags == other.pipelineFlags &&
-		renderMode == other.renderMode;
-}
-
-std::size_t HIGHOMEGA::GL::RasterPSOKeyHash::operator()(const RasterPSOKey & k) const
-{
-	using std::size_t;
-	using std::hash;
-	using std::string;
-
-	return hash<string>()(k.vertex_shader)
-		^ (hash<string>()(k.tc_shader) << 1)
-		^ (hash<string>()(k.te_shader) << 2)
-		^ (hash<string>()(k.geom_shader) << 3)
-		^ (hash<string>()(k.fragment_shader) << 4)
-		^ (HIGHOMEGA::GL::PipelineFlagsHash()(k.pipelineFlags) << 5)
-		^ (hash<RENDER_MODE>()(k.renderMode) << 6);
 }
 
 std::mutex shader_stage_mutex;
@@ -2960,7 +2923,8 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 		throw std::runtime_error("We do not have a pointer to the Vulkan instance");
 	}
 
-	if (haveKTXVulkanTexture) ktxVulkanTexture_Destruct(&ktxVulkanTexture, cachedInstance->ktxVDI.device, nullptr);
+	{std::unique_lock<std::mutex> lk(cachedInstance->queue_mutex);
+	if (haveKTXVulkanTexture) ktxVulkanTexture_Destruct(&ktxVulkanTexture, cachedInstance->ktxVDI.device, nullptr); }
 	if (haveImageView) vkDestroyImageView(cachedInstance->device, view, nullptr);
 	for (VkImageView & curView : layerView) {
 		vkDestroyImageView(cachedInstance->device, curView, nullptr);
@@ -3235,6 +3199,7 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 	}
 	else if (dataType == IMAGE_DATA_KTX)
 	{
+		{std::unique_lock<std::mutex> lk(cachedInstance->queue_mutex);
 		ktxTexture2* kTexture;
 		KTX_error_code result = ktxTexture_CreateFromMemory(data, dataSize, KTX_TEXTURE_CREATE_NO_FLAGS, (ktxTexture**)&kTexture);
 		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxTexture from ktx file"); }
@@ -3246,7 +3211,7 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 		}
 		result = ktxTexture_VkUploadEx((ktxTexture*)kTexture, &cachedInstance->ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxVulkanTexture from ktx file"); }
-		ktxTexture_Destroy((ktxTexture*)kTexture);
+		ktxTexture_Destroy((ktxTexture*)kTexture); }
 
 		haveKTXVulkanTexture = true;
 

@@ -1067,27 +1067,6 @@ namespace HIGHOMEGA
 				void makeSerial();
 			};
 		}
-		class RasterPSOKey
-		{
-		public:
-			std::string vertex_shader;
-			std::string tc_shader;
-			std::string te_shader;
-			std::string geom_shader;
-			std::string fragment_shader;
-
-			PipelineFlags pipelineFlags;
-
-			RENDER_MODE renderMode;
-
-			RasterPSOKey(std::string & inp_vertex_shader, std::string & inp_tc_shader, std::string & inp_te_shader, std::string & inp_geom_shader, std::string & inp_fragment_shader, PipelineFlags & inpPipelineFlags, RENDER_MODE inpRenderMode);
-			bool operator==(const RasterPSOKey& other) const;
-		};
-		class RasterPSOKeyHash
-		{
-		public:
-			std::size_t operator()(const RasterPSOKey& k) const;
-		};
 		class RasterPipelineStateClass
 		{
 			friend class RasterletClass;
@@ -1114,7 +1093,7 @@ namespace HIGHOMEGA
 			RasterPipelineStateClass *PSO;
 			DescriptorSetLayout *DSL;
 		};
-		extern std::unordered_map<RasterPSOKey, Raster_PSO_DSL, RasterPSOKeyHash> globalRaster_PSO_DSL_Cache;
+		extern std::unordered_map<std::string, Raster_PSO_DSL> globalRaster_PSO_DSL_Cache;
 		extern std::mutex globalRaster_PSO_DSL_Cache_mutex;
 		class ComputePipelineStateClass
 		{
