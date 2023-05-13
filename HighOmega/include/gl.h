@@ -61,13 +61,22 @@ namespace HIGHOMEGA
 		{
 			struct SubAlloc
 			{
-				unsigned long long id = 0, offset = 0, len = 0;
+				unsigned long long offset = 0, len = 0;
+				bool operator==(const SubAlloc& rhs) const
+				{
+					return (rhs.offset == offset && rhs.len == len);
+				}
 			};
 			struct MemChunk
 			{
 				VkDeviceMemory mem;
 				unsigned long long used = 0;
-				std::vector<SubAlloc> allocs;
+				std::list<SubAlloc> allocs;
+				std::list<MemChunk>* owner;
+				bool operator==(const MemChunk& rhs) const
+				{
+					return rhs.mem == mem;
+				}
 			};
 			enum MEMORY_MAP_TYPE
 			{
@@ -75,9 +84,9 @@ namespace HIGHOMEGA
 				BUFFER,
 				DEV_ADDRESS
 			};
-			unsigned long long AllocMem(VkDevice & inpDev, VkMemoryAllocateInfo & allocInfo, VkMemoryRequirements & memReq, MEMORY_MAP_TYPE memoryMapType, VkDeviceMemory *mem, unsigned long long *offset, unsigned long long *len);
+			std::vector<std::pair<MemChunk *, SubAlloc>> AllocMem(VkDevice & inpDev, VkMemoryAllocateInfo & allocInfo, VkMemoryRequirements & memReq, MEMORY_MAP_TYPE memoryMapType, bool useSparseResources);
 			void LogMemUsageStats();
-			void FreeMem(unsigned long long id, MEMORY_MAP_TYPE memoryMapType, int memType, VkDevice & inpDev);
+			void FreeMem(std::vector<std::pair<MemChunk *, SubAlloc>>& pages, VkDevice& inpDev);
 		}
 		namespace KHR_RT
 		{
@@ -184,10 +193,14 @@ namespace HIGHOMEGA
 		class SemaphoreClass;
 		class ComputeletClass;
 		class RasterletClass;
+		class BufferClass;
+		class ImageClass;
 		class FenceClass : public CStyleWrapper
 		{
 			friend class RasterletClass;
 			friend class SemaphoreClass;
+			friend class BufferClass;
+			friend class ImageClass;
 		protected:
 			VkFence fence;
 
@@ -322,9 +335,7 @@ namespace HIGHOMEGA
 			InstanceClass *instanceRef;
 			ThreadLocalCache <BufferClass *>::value *stagingBufferPtr = nullptr;
 
-			unsigned long long offset, len, subAllocId;
-			int typeForSubAlloc;
-			VkDeviceMemory memPtr;
+			std::vector<std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>> subAllocs;
 
 			bool haveBuffer;
 			bool haveSubAlloc;
@@ -496,8 +507,7 @@ namespace HIGHOMEGA
 			FORMAT format;
 			unsigned int downloadBufferSize;
 			unsigned char *downloadData;
-			unsigned long long subAllocId;
-			int typeForSubAlloc;
+			std::vector<std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>> subAllocs;
 
 			bool haveKTXVulkanTexture;
 			bool haveSampler;
@@ -622,6 +632,7 @@ namespace HIGHOMEGA
 			bool validationLayer;
 			bool supportsHWRT;
 			static bool lowMemoryDevice;
+			bool supportsSparseResources;
 			unsigned long long vramAmount;
 
 			ktxVulkanDeviceInfo ktxVDI;
@@ -693,6 +704,7 @@ namespace HIGHOMEGA
 			FramebufferClass & swapChainFrameBuffer();
 			bool SupportsHWRT();
 			static bool LowMemoryDevice();
+			bool SupportsSparseResources();
 			void RemovePast();
 			~InstanceClass();
 		};

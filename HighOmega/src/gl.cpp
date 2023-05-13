@@ -33,9 +33,9 @@ namespace HIGHOMEGA::GL
 {
 	bool InstanceClass::lowMemoryDevice = false;
 	std::unordered_map <std::string, HIGHOMEGA::CacheItem<ShaderStage>> ShaderStageCache;
-	std::unordered_map <int, std::vector<MemChunk>> ImageMemoryMap;
-	std::unordered_map <int, std::vector<MemChunk>> BufferMemoryMap;
-	std::unordered_map <int, std::vector<MemChunk>> RTMemoryMap;
+	std::unordered_map <int, std::list<MemChunk>> ImageMemoryMap;
+	std::unordered_map <int, std::list<MemChunk>> BufferMemoryMap;
+	std::unordered_map <int, std::list<MemChunk>> RTMemoryMap;
 	std::mutex mem_manager_mutex;
 }
 
@@ -48,8 +48,9 @@ ThreadLocalCache <BufferClass *> HIGHOMEGA::GL::BufferClass::stagingBuffers;
 ThreadLocalCache <BufferClass *> HIGHOMEGA::GL::ImageClass::stagingBuffers;
 ThreadLocalCache <VkCommandPool> HIGHOMEGA::GL::CommandBuffer::cmdPools;
 thread_local std::vector <VkSemaphore> HIGHOMEGA::GL::waitSemaphores;
+thread_local unsigned long long ThreadID = mersenneTwister64BitPRNG();
 
-unsigned long long HIGHOMEGA::GL::MEMORY_MANAGER::AllocMem(VkDevice & inpDev, VkMemoryAllocateInfo & allocInfo, VkMemoryRequirements & memReq, MEMORY_MAP_TYPE memoryMapType, VkDeviceMemory *mem, unsigned long long *offset, unsigned long long *len)
+std::vector<std::pair<MemChunk *, SubAlloc>> HIGHOMEGA::GL::MEMORY_MANAGER::AllocMem(VkDevice & inpDev, VkMemoryAllocateInfo & allocInfo, VkMemoryRequirements & memReq, MEMORY_MAP_TYPE memoryMapType, bool useSparseResources)
 {
 	std::lock_guard <std::mutex> lk(mem_manager_mutex);
 	unsigned long long storageSizeAligned = (unsigned long long)ceil((double)memReq.size / (double)memReq.alignment) * (unsigned long long)memReq.alignment;
@@ -57,8 +58,8 @@ unsigned long long HIGHOMEGA::GL::MEMORY_MANAGER::AllocMem(VkDevice & inpDev, Vk
 	VkResult result;
 
 	unsigned long long chunkMaxSize;
-	std::vector<MemChunk> *memChunkVecRef;
-	switch (memoryMapType)
+	std::list<MemChunk> *memChunkVecRef;
+	switch(memoryMapType)
 	{
 	case IMAGE:
 		memChunkVecRef = &ImageMemoryMap[allocInfo.memoryTypeIndex];
@@ -66,7 +67,7 @@ unsigned long long HIGHOMEGA::GL::MEMORY_MANAGER::AllocMem(VkDevice & inpDev, Vk
 		break;
 	case BUFFER:
 		memChunkVecRef = &BufferMemoryMap[allocInfo.memoryTypeIndex];
-		chunkMaxSize = 1024 * 1024 * 250;
+		chunkMaxSize = 1024 * 1024 * (useSparseResources ? 200 : 250);
 		break;
 	case DEV_ADDRESS:
 	default:
@@ -76,21 +77,25 @@ unsigned long long HIGHOMEGA::GL::MEMORY_MANAGER::AllocMem(VkDevice & inpDev, Vk
 	}
 	for (MemChunk & curChunk : *memChunkVecRef)
 	{
-		for (int i = 0; i < curChunk.allocs.size() - 1; i++)
+		std::list<SubAlloc>::iterator it = curChunk.allocs.begin();
+		if (curChunk.allocs.size() > 1)
 		{
-			SubAlloc & curSubAlloc = curChunk.allocs[i];
-			SubAlloc & nextSubAlloc = curChunk.allocs[i + 1];
-			unsigned long long offsetAligned = (unsigned long long)ceil((double)(curSubAlloc.offset + curSubAlloc.len) / (double)memReq.alignment) * (unsigned long long)memReq.alignment;
-			if (offsetAligned + storageSizeAligned <= nextSubAlloc.offset)
+			while (true)
 			{
-				SubAlloc newSubAlloc;
-				newSubAlloc.id = mersenneTwister64BitPRNG();
-				*len = newSubAlloc.len = storageSizeAligned;
-				*offset = newSubAlloc.offset = offsetAligned;
-				*mem = curChunk.mem;
-				curChunk.allocs.insert(curChunk.allocs.begin() + i + 1, newSubAlloc);
+				SubAlloc& curSubAlloc = *it;
+				it++;
+				SubAlloc& nextSubAlloc = *it;
+				unsigned long long offsetAligned = (unsigned long long)ceil((double)(curSubAlloc.offset + curSubAlloc.len) / (double)memReq.alignment) * (unsigned long long)memReq.alignment;
+				if (offsetAligned + storageSizeAligned <= nextSubAlloc.offset)
+				{
+					SubAlloc newSubAlloc;
+					newSubAlloc.len = storageSizeAligned;
+					newSubAlloc.offset = offsetAligned;
+					curChunk.allocs.insert(it, newSubAlloc);
 
-				return newSubAlloc.id;
+					return { std::make_pair(&curChunk, newSubAlloc) };
+				}
+				if (nextSubAlloc == curChunk.allocs.back()) break;
 			}
 		}
 
@@ -99,20 +104,65 @@ unsigned long long HIGHOMEGA::GL::MEMORY_MANAGER::AllocMem(VkDevice & inpDev, Vk
 		if (usedAligned + storageSizeAligned > chunkMaxSize) continue;
 
 		SubAlloc newSubAlloc;
-		newSubAlloc.id = mersenneTwister64BitPRNG();
-		*len = newSubAlloc.len = storageSizeAligned;
-		*offset = newSubAlloc.offset = usedAligned;
-		*mem = curChunk.mem;
-		curChunk.allocs.reserve(((curChunk.allocs.size() / 1000) + 1) * 1000);
+		newSubAlloc.len = storageSizeAligned;
+		newSubAlloc.offset = usedAligned;
 		curChunk.allocs.push_back(newSubAlloc);
 
 		curChunk.used = usedAligned + storageSizeAligned;
 
-		return newSubAlloc.id;
+		return { std::make_pair(&curChunk, newSubAlloc) };
+	}
+	unsigned long long storageSizeConsumed = 0u;
+	std::vector<std::pair<MemChunk*, SubAlloc>> returnedSubAllocs;
+	if (useSparseResources)
+	{
+		for (MemChunk& curChunk : *memChunkVecRef)
+		{
+			std::list<SubAlloc>::iterator it = curChunk.allocs.begin();
+			if (curChunk.allocs.size() > 1)
+			{
+				while (true)
+				{
+					SubAlloc& curSubAlloc = *it;
+					it++;
+					SubAlloc& nextSubAlloc = *it;
+					unsigned long long offsetAligned = (unsigned long long)ceil((double)(curSubAlloc.offset + curSubAlloc.len) / (double)memReq.alignment) * (unsigned long long)memReq.alignment;
+					if (nextSubAlloc.offset > offsetAligned && storageSizeConsumed < storageSizeAligned)
+					{
+						SubAlloc newSubAlloc;
+						newSubAlloc.len = min(nextSubAlloc.offset - offsetAligned, storageSizeAligned - storageSizeConsumed);
+						newSubAlloc.offset = offsetAligned;
+						storageSizeConsumed += newSubAlloc.len;
+						curChunk.allocs.insert(it, newSubAlloc);
+
+						returnedSubAllocs.push_back(std::make_pair(&curChunk, newSubAlloc));
+					}
+					if (nextSubAlloc == curChunk.allocs.back() || storageSizeConsumed == storageSizeAligned) break;
+				}
+			}
+
+			unsigned long long usedAligned = (unsigned long long)ceil((double)(curChunk.used) / (double)memReq.alignment) * (unsigned long long)memReq.alignment;
+
+			if (storageSizeConsumed == storageSizeAligned || chunkMaxSize == usedAligned) break;
+
+			SubAlloc newSubAlloc;
+			newSubAlloc.len = min(chunkMaxSize - usedAligned, storageSizeAligned - storageSizeConsumed);
+			newSubAlloc.offset = usedAligned;
+			storageSizeConsumed += newSubAlloc.len;
+			curChunk.allocs.push_back(newSubAlloc);
+
+			curChunk.used = chunkMaxSize;
+
+			returnedSubAllocs.push_back (std::make_pair(&curChunk, newSubAlloc));
+			if (storageSizeConsumed == storageSizeAligned) break;
+		}
+		if (storageSizeConsumed == storageSizeAligned)
+			return returnedSubAllocs;
 	}
 
-	memChunkVecRef->resize(memChunkVecRef->size() + 1);
+	memChunkVecRef->push_back(MemChunk());
 	MemChunk & addedChunkRef = memChunkVecRef->back();
+	addedChunkRef.owner = memChunkVecRef;
 
 	allocInfo.allocationSize = chunkMaxSize;
 	VkMemoryAllocateFlagsInfo memFlagInfo;
@@ -128,15 +178,19 @@ unsigned long long HIGHOMEGA::GL::MEMORY_MANAGER::AllocMem(VkDevice & inpDev, Vk
 	if (result != VK_SUCCESS) throw std::runtime_error("Could not allocate memory chunk");
 
 	SubAlloc newSubAlloc;
-	newSubAlloc.id = mersenneTwister64BitPRNG();
-	*len = newSubAlloc.len = storageSizeAligned;
-	*offset = newSubAlloc.offset = addedChunkRef.used;
-	*mem = addedChunkRef.mem;
+	newSubAlloc.len = useSparseResources ? (storageSizeAligned - storageSizeConsumed) : storageSizeAligned;
+	newSubAlloc.offset = addedChunkRef.used;
 	addedChunkRef.allocs.push_back(newSubAlloc);
 
-	addedChunkRef.used += storageSizeAligned;
+	addedChunkRef.used += newSubAlloc.len;
 
-	return newSubAlloc.id;
+	if (useSparseResources)
+	{
+		returnedSubAllocs.push_back(std::make_pair(&addedChunkRef, newSubAlloc));
+		return returnedSubAllocs;
+	}
+	else
+		return { std::make_pair(&addedChunkRef, newSubAlloc) };
 }
 
 void HIGHOMEGA::GL::MEMORY_MANAGER::LogMemUsageStats()
@@ -144,21 +198,21 @@ void HIGHOMEGA::GL::MEMORY_MANAGER::LogMemUsageStats()
 	std::lock_guard <std::mutex> lk(mem_manager_mutex);
 	LOG() << "Mem usage statistics: ";
 	LOG() << "Images:";
-	for (std::pair<const int, std::vector<MemChunk>> curPair : ImageMemoryMap)
+	for (std::pair<const int, std::list<MemChunk>> curPair : ImageMemoryMap)
 	{
 		LOG() << "memoryTypeIndex: " << curPair.first;
 		for (MemChunk & curChunk : curPair.second)
 			LOG() << "Chunk usage: " << curChunk.used;
 	}
 	LOG() << "Buffers:";
-	for (std::pair<const int, std::vector<MemChunk>> curPair : BufferMemoryMap)
+	for (std::pair<const int, std::list<MemChunk>> curPair : BufferMemoryMap)
 	{
 		LOG() << "memoryTypeIndex: " << curPair.first;
 		for (MemChunk & curChunk : curPair.second)
 			LOG() << "Chunk usage: " << curChunk.used;
 	}
 	LOG() << "HW RT buffers:";
-	for (std::pair<const int, std::vector<MemChunk>> curPair : RTMemoryMap)
+	for (std::pair<const int, std::list<MemChunk>> curPair : RTMemoryMap)
 	{
 		LOG() << "memoryTypeIndex: " << curPair.first;
 		for (MemChunk & curChunk : curPair.second)
@@ -166,42 +220,19 @@ void HIGHOMEGA::GL::MEMORY_MANAGER::LogMemUsageStats()
 	}
 }
 
-void HIGHOMEGA::GL::MEMORY_MANAGER::FreeMem(unsigned long long id, MEMORY_MAP_TYPE memoryMapType, int memType, VkDevice & inpDev)
+void HIGHOMEGA::GL::MEMORY_MANAGER::FreeMem(std::vector<std::pair<MemChunk *, SubAlloc>>& pages, VkDevice & inpDev)
 {
 	std::lock_guard <std::mutex> lk(mem_manager_mutex);
-	bool memFreed = false;
-	std::vector<MemChunk> *curChunkVec;
-	switch (memoryMapType)
+	for (std::pair<MemChunk*, SubAlloc> & curPage : pages)
 	{
-	case IMAGE:
-		curChunkVec = &ImageMemoryMap[memType];
-		break;
-	case BUFFER:
-		curChunkVec = &BufferMemoryMap[memType];
-		break;
-	case DEV_ADDRESS:
-	default:
-		curChunkVec = &RTMemoryMap[memType];
-		break;
-	}
-	for (int i = 0; i != curChunkVec->size(); i++)
-	{
-		MemChunk & curChunk = (*curChunkVec)[i];
-		for (int j = 0; j != curChunk.allocs.size(); j++)
-			if (curChunk.allocs[j].id == id)
-			{
-				memFreed = true;
-				curChunk.allocs.erase(curChunk.allocs.begin() + j);
-				break;
-			}
-		if (curChunk.allocs.size() == 0)
+		curPage.first->allocs.remove(curPage.second);
+		if (curPage.first->allocs.size() == 0)
 		{
-			vkFreeMemory(inpDev, curChunk.mem, nullptr);
-			(*curChunkVec).erase((*curChunkVec).begin() + i);
-			return;
+			vkFreeMemory(inpDev, curPage.first->mem, nullptr);
+			curPage.first->owner->remove(*curPage.first);
 		}
-		if (memFreed) return;
 	}
+	pages.clear();
 }
 
 bool RTInstance::rtEnabled = false;
@@ -474,6 +505,8 @@ void InstanceClass::Make(bool validationLayer, WindowClass &inpWindow, bool requ
 	deviceFeatures.tessellationShader = VK_TRUE;
 	deviceFeatures.vertexPipelineStoresAndAtomics = VK_TRUE;
 	deviceFeatures.fragmentStoresAndAtomics = VK_TRUE;
+	//deviceFeatures.sparseBinding = true;
+	supportsSparseResources = false; // Sparse bindings did NOT solve anything...
 
 	VkPhysicalDevice16BitStorageFeaturesKHR VkPhysicalDevice16BitStorageFeatures = {};
 	VkPhysicalDevice16BitStorageFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
@@ -804,7 +837,7 @@ void InstanceClass::Make(bool validationLayer, WindowClass &inpWindow, bool requ
 	catch (...) { CreateSwapChainRemovePast(); throw std::runtime_error("Could not create setup command buffer"); }
 
 	VkCommandPool cmdPool;
-	{std::unique_lock<std::mutex> lk(cmdPools.mtx); cmdPool = cmdPools.dir[std::this_thread::get_id()].elem; }
+	{std::unique_lock<std::mutex> lk(cmdPools.mtx); cmdPool = cmdPools.dir[ThreadID].elem; }
 
 	KTX_error_code ktxResult = ktxVulkanDeviceInfo_Construct(&ktxVDI, physicalDevice, device, submissionQueue, cmdPool, nullptr);
 	if (ktxResult != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Could not supply vulkan device info to libKTX"); }
@@ -944,6 +977,11 @@ bool HIGHOMEGA::GL::InstanceClass::LowMemoryDevice()
 InstanceClass::~InstanceClass()
 {
 	RemovePast();
+}
+
+bool HIGHOMEGA::GL::InstanceClass::SupportsSparseResources()
+{
+	return supportsSparseResources;
 }
 
 InstanceClass HIGHOMEGA::GL::Instance;
@@ -1604,7 +1642,13 @@ void HIGHOMEGA::GL::FenceClass::Wait()
 {
 	if (!ptrToInstance || !haveFence) throw std::runtime_error("fence not initialized for wait");
 
-	if (vkWaitForFences(ptrToInstance->device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) throw std::runtime_error("Could not wait on fence");
+	VkResult result = vkWaitForFences(ptrToInstance->device, 1, &fence, VK_TRUE, UINT64_MAX);
+	if (result != VK_SUCCESS)
+	{
+		if (result == VK_ERROR_OUT_OF_HOST_MEMORY) throw std::runtime_error("Could not wait on fence: out of host memory");
+		else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) throw std::runtime_error("Could not wait on fence: out of device memory");
+		else throw std::runtime_error("Could not wait on fence: device lost");
+	}
 }
 
 void HIGHOMEGA::GL::FenceClass::Reset()
@@ -2162,7 +2206,7 @@ void HIGHOMEGA::GL::GeometryClass::TransformCorners(mat4 inpMat)
 
 void BufferClass::RemovePast()
 {
-	if (haveSubAlloc) FreeMem(subAllocId, ((usage & USAGE_DEVICE_ADDRESS) != 0) ? DEV_ADDRESS : BUFFER, typeForSubAlloc, instanceRef->device);
+	if (haveSubAlloc) FreeMem (subAllocs, instanceRef->device);
 	if (haveBuffer)
 	{
 		vkDestroyBuffer(instanceRef->device, buffer, nullptr);
@@ -2215,6 +2259,7 @@ void HIGHOMEGA::GL::BufferClass::Buffer(MEMORY_OPTIONS inpMemOpts, BUFFER_SHARIN
 	bufferInfo.size = totalDataSize;
 	bufferInfo.usage = inpUsage;
 	if (sharing == SHARING_EXCLUSIVE) bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	if (inpInstance.SupportsSparseResources()) bufferInfo.flags |= VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
 
 	VkResult result = vkCreateBuffer(inpInstance.device, &bufferInfo, nullptr, &buffer);
 	if (result != VK_SUCCESS) { RemovePast(); throw std::runtime_error("Could not create uniform buffer"); }
@@ -2225,8 +2270,7 @@ void HIGHOMEGA::GL::BufferClass::Buffer(MEMORY_OPTIONS inpMemOpts, BUFFER_SHARIN
 
 	try
 	{
-		subAllocId = AllocMem(inpInstance.device, allocInfo, memReqs, ((usage & USAGE_DEVICE_ADDRESS) != 0) ? DEV_ADDRESS : BUFFER, &memPtr, &offset, &len);
-		typeForSubAlloc = allocInfo.memoryTypeIndex;
+		subAllocs = AllocMem(inpInstance.device, allocInfo, memReqs, ((usage & USAGE_DEVICE_ADDRESS) != 0) ? DEV_ADDRESS : BUFFER, inpInstance.SupportsSparseResources());
 		haveSubAlloc = true;
 	}
 	catch (...)
@@ -2235,8 +2279,41 @@ void HIGHOMEGA::GL::BufferClass::Buffer(MEMORY_OPTIONS inpMemOpts, BUFFER_SHARIN
 		throw std::runtime_error("Could not allocate buffer memory");
 	}
 
-	{std::unique_lock <std::mutex> lk(mem_manager_mutex);
-	result = vkBindBufferMemory(inpInstance.device, buffer, memPtr, offset); }
+	if (inpInstance.SupportsSparseResources())
+	{
+		std::unique_lock <std::mutex> lk(mem_manager_mutex);
+		std::unique_lock <std::mutex> lk2(inpInstance.queue_mutex);
+		FenceClass sparseFence;
+		sparseFence.Fence(&inpInstance);
+		sparseFence.Reset();
+		VkSparseBufferMemoryBindInfo bufferMemoryBinds;
+		bufferMemoryBinds.buffer = buffer;
+		std::vector<VkSparseMemoryBind> memoryBinds;
+		unsigned long long resourceOffset = 0ull;
+		for (std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>& curSubAlloc : subAllocs)
+		{
+			VkSparseMemoryBind curBufBind = {};
+			curBufBind.memory = curSubAlloc.first->mem;
+			curBufBind.memoryOffset = (VkDeviceSize)curSubAlloc.second.offset;
+			curBufBind.size = (VkDeviceSize)curSubAlloc.second.len;
+			curBufBind.resourceOffset = (VkDeviceSize)resourceOffset;
+			resourceOffset += curSubAlloc.second.len;
+			memoryBinds.push_back(curBufBind);
+		}
+		bufferMemoryBinds.bindCount = (uint32_t)memoryBinds.size();
+		bufferMemoryBinds.pBinds = memoryBinds.data();
+		VkBindSparseInfo vkBindSparseInfo = {};
+		vkBindSparseInfo.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
+		vkBindSparseInfo.bufferBindCount = 1;
+		vkBindSparseInfo.pBufferBinds = &bufferMemoryBinds;
+		result = vkQueueBindSparse(inpInstance.submissionQueue, 1, &vkBindSparseInfo, sparseFence.fence);
+		sparseFence.Wait();
+	}
+	else
+	{
+		std::unique_lock <std::mutex> lk(mem_manager_mutex);
+		result = vkBindBufferMemory(inpInstance.device, buffer, subAllocs.begin()->first->mem, subAllocs.begin()->second.offset);
+	}
 	if (result != VK_SUCCESS) { RemovePast(); throw std::runtime_error("Could not bind buffer to memory"); }
 
 	descriptor.buffer = buffer;
@@ -2258,19 +2335,19 @@ void HIGHOMEGA::GL::BufferClass::BufferClassWithStaging(BUFFER_SHARING inpSharin
 	totalDataSize = inpDataSize;
 
 	{std::unique_lock <std::mutex> lk(stagingBuffers.mtx);
-	if (stagingBuffers.dir.find(std::this_thread::get_id()) == stagingBuffers.dir.end() || stagingBuffers.dir[std::this_thread::get_id()].elem->getSize() < totalDataSize)
+	if (stagingBuffers.dir.find(ThreadID) == stagingBuffers.dir.end() || stagingBuffers.dir[ThreadID].elem->getSize() < totalDataSize)
 	{
-		if (stagingBuffers.dir.find(std::this_thread::get_id()) != stagingBuffers.dir.end())
-			delete stagingBuffers.dir[std::this_thread::get_id()].elem;
+		if (stagingBuffers.dir.find(ThreadID) != stagingBuffers.dir.end())
+			delete stagingBuffers.dir[ThreadID].elem;
 		else
 		{
-			stagingBuffers.dir[std::this_thread::get_id()].elemCount = 0;
-			stagingBuffers.dir[std::this_thread::get_id()].keyRef = std::this_thread::get_id();
+			stagingBuffers.dir[ThreadID].elemCount = 0;
+			stagingBuffers.dir[ThreadID].keyRef = ThreadID;
 		}
-		stagingBuffers.dir[std::this_thread::get_id()].elem = new BufferClass(MEMORY_HOST_VISIBLE, inpSharing, inpMode, USAGE_SRC | inpUsage, inpInstance, nullptr, totalDataSize);
+		stagingBuffers.dir[ThreadID].elem = new BufferClass(MEMORY_HOST_VISIBLE, inpSharing, inpMode, USAGE_SRC | inpUsage, inpInstance, nullptr, totalDataSize);
 	}
-	stagingBuffers.dir[std::this_thread::get_id()].elemCount++;
-	stagingBufferPtr = &stagingBuffers.dir[std::this_thread::get_id()]; }
+	stagingBuffers.dir[ThreadID].elemCount++;
+	stagingBufferPtr = &stagingBuffers.dir[ThreadID];}
 	stagingBufferPtr->elem->UploadSubData(0, inpData, totalDataSize);
 	ThreadLocalCache <BufferClass *>::value *stagingBufferPtrCache = stagingBufferPtr;
 	Buffer(MEMORY_DEVICE_LOCAL, inpSharing, inpMode, USAGE_DST | inpUsage, inpInstance, nullptr, totalDataSize);
@@ -2296,30 +2373,58 @@ unsigned int HIGHOMEGA::GL::BufferClass::getSize()
 	return totalDataSize;
 }
 
-void HIGHOMEGA::GL::BufferClass::UploadSubData(unsigned int inpOffset, void * inpData, unsigned int inpDataSize)
+void HIGHOMEGA::GL::BufferClass::UploadSubData(unsigned int inpOffset, void *inpData, unsigned int inpDataSize)
 {
 	std::lock_guard<std::mutex> lk(mem_manager_mutex);
 	if (!haveBuffer || !haveSubAlloc) throw std::runtime_error("Buffer not initialized properly for upload");
 
 	unsigned char *dataPtr;
 	VkResult result;
-	result = vkMapMemory(instanceRef->device, memPtr, offset + inpOffset, inpDataSize, 0, (void **)&dataPtr);
-	if (result != VK_SUCCESS) throw std::runtime_error("Memory map failed for upload");
-	memcpy(dataPtr, inpData, inpDataSize);
-	vkUnmapMemory(instanceRef->device, memPtr);
+	unsigned int copiedSoFar = 0u;
+	for (std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>& curSubAlloc : subAllocs)
+	{
+		if (inpOffset >= (unsigned int)curSubAlloc.second.len)
+		{
+			inpOffset -= (unsigned int)curSubAlloc.second.len;
+			continue;
+		}
+		unsigned long long copyAmount = min(curSubAlloc.second.len - inpOffset, inpDataSize);
+		result = vkMapMemory(instanceRef->device, curSubAlloc.first->mem, curSubAlloc.second.offset + inpOffset, (VkDeviceSize)copyAmount, 0, (void**)&dataPtr);
+		if (result != VK_SUCCESS) throw std::runtime_error("Memory map failed for upload");
+		memcpy(dataPtr, (void *)&(((unsigned char *)inpData)[copiedSoFar]), copyAmount);
+		inpDataSize -= (unsigned int)copyAmount;
+		copiedSoFar += (unsigned int)copyAmount;
+		inpOffset = 0u;
+		vkUnmapMemory(instanceRef->device, curSubAlloc.first->mem);
+		if (inpDataSize == 0u) break;
+	}
 }
 
-void HIGHOMEGA::GL::BufferClass::DownloadSubData(unsigned int inpOffset, void * inpData, unsigned int inpDataSize)
+void HIGHOMEGA::GL::BufferClass::DownloadSubData(unsigned int inpOffset, void *inpData, unsigned int inpDataSize)
 {
 	std::lock_guard<std::mutex> lk(mem_manager_mutex);
 	if (!haveBuffer || !haveSubAlloc) throw std::runtime_error("Buffer not initialized properly for download");
 
 	unsigned char *dataPtr;
 	VkResult result;
-	result = vkMapMemory(instanceRef->device, memPtr, offset + inpOffset, inpDataSize, 0, (void **)&dataPtr);
-	if (result != VK_SUCCESS) throw std::runtime_error("Memory map failed for download");
-	memcpy(inpData, dataPtr, inpDataSize);
-	vkUnmapMemory(instanceRef->device, memPtr);
+	unsigned int copiedSoFar = 0u;
+	for (std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>& curSubAlloc : subAllocs)
+	{
+		if (inpOffset >= (unsigned int)curSubAlloc.second.len)
+		{
+			inpOffset -= (unsigned int)curSubAlloc.second.len;
+			continue;
+		}
+		unsigned long long copyAmount = min(curSubAlloc.second.len - inpOffset, inpDataSize);
+		result = vkMapMemory(instanceRef->device, curSubAlloc.first->mem, curSubAlloc.second.offset + inpOffset, (VkDeviceSize)copyAmount, 0, (void**)&dataPtr);
+		if (result != VK_SUCCESS) throw std::runtime_error("Memory map failed for download");
+		memcpy((void*)&(((unsigned char*)inpData)[copiedSoFar]), dataPtr, copyAmount);
+		inpDataSize -= (unsigned int)copyAmount;
+		copiedSoFar += (unsigned int)copyAmount;
+		inpOffset = 0u;
+		vkUnmapMemory(instanceRef->device, curSubAlloc.first->mem);
+		if (inpDataSize == 0u) break;
+	}
 }
 
 BufferClass::~BufferClass()
@@ -2564,20 +2669,20 @@ ThreadLocalCache <VkCommandPool>::value *HIGHOMEGA::GL::CommandBuffer::CreateCom
 	std::lock_guard <std::mutex> lk(cmdPools.mtx);
 	if (!ptrToInstance) ptrToInstance = &providedInstance;
 
-	if (cmdPools.dir.find(std::this_thread::get_id()) == cmdPools.dir.end())
+	if (cmdPools.dir.find(ThreadID) == cmdPools.dir.end())
 	{
 		VkCommandPoolCreateInfo cmdPoolInfo = {};
 		cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 		cmdPoolInfo.queueFamilyIndex = ptrToInstance->graphicsQueueNodeIndex;
 		cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-		VkResult result = vkCreateCommandPool(ptrToInstance->device, &cmdPoolInfo, nullptr, &cmdPools.dir[std::this_thread::get_id()].elem);
+		VkResult result = vkCreateCommandPool(ptrToInstance->device, &cmdPoolInfo, nullptr, &cmdPools.dir[ThreadID].elem);
 		if (result != VK_SUCCESS) { throw std::runtime_error("CommandBuffer: Could not create command pool"); }
-		cmdPools.dir[std::this_thread::get_id()].elemCount = doNotIncreaseRefCount ? 0 : 1;
-		cmdPools.dir[std::this_thread::get_id()].keyRef = std::this_thread::get_id();
+		cmdPools.dir[ThreadID].elemCount = doNotIncreaseRefCount ? 0 : 1;
+		cmdPools.dir[ThreadID].keyRef = ThreadID;
 	}
 	else
-		if (!doNotIncreaseRefCount) cmdPools.dir[std::this_thread::get_id()].elemCount++;
-	return &cmdPools.dir[std::this_thread::get_id()];
+		if (!doNotIncreaseRefCount) cmdPools.dir[ThreadID].elemCount++;
+	return &cmdPools.dir[ThreadID];
 }
 
 void HIGHOMEGA::GL::CommandBuffer::BeginCommandBuffer(InstanceClass & instanceRef, unsigned int inpNumCmdBufs, unsigned int which)
@@ -2644,7 +2749,12 @@ void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer(unsigned int which)
 	VkResult result;
 	{std::unique_lock<std::mutex> lk(ptrToInstance->queue_mutex);
 	result = vkQueueSubmit(ptrToInstance->submissionQueue, 1, &submitInfo, fence); }
-	if (result != VK_SUCCESS) { throw std::runtime_error("CommandBuffer: Could not submit queue"); }
+	if (result != VK_SUCCESS)
+	{
+		if (result == VK_ERROR_OUT_OF_HOST_MEMORY) throw std::runtime_error("CommandBuffer could not submit queue: out of host memory");
+		else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) throw std::runtime_error("CommandBuffer could not submit queue: out of device memory");
+		else throw std::runtime_error("CommandBuffer could not submit queue: device lost");
+	}
 
 	Wait();
 }
@@ -2679,7 +2789,12 @@ void HIGHOMEGA::GL::CommandBuffer::WaitSubmitSignalCommandBuffer(SUBMISSION_MODE
 	VkResult result;
 	{std::unique_lock<std::mutex> lk(ptrToInstance->queue_mutex);
 	result = vkQueueSubmit(ptrToInstance->submissionQueue, 1, &submitInfo, inpSubMode == SUBMIT_SERIAL ? fence : VK_NULL_HANDLE); }
-	if (result != VK_SUCCESS) { throw std::runtime_error("CommandBuffer: Could not submit queue"); }
+	if (result != VK_SUCCESS)
+	{
+		if (result == VK_ERROR_OUT_OF_HOST_MEMORY) throw std::runtime_error("CommandBuffer could not submit and wait on queue: out of host memory");
+		else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) throw std::runtime_error("CommandBuffer could not submit and wait on queue: out of device memory");
+		else throw std::runtime_error("CommandBuffer could not submit and wait on queue: device lost");
+	}
 
 	if (inpSubMode == SUBMIT_SERIAL)
 	{
@@ -2845,6 +2960,7 @@ void HIGHOMEGA::GL::ImageClass::CreateImage(bool depthStencil, bool useFormat, F
 	imageCreateStruct.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	if (usedAsStorageTarget) imageCreateStruct.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
 	imageCreateStruct.flags = (numDims == _2D && numLayers == 6) ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
+	if (cachedInstance->SupportsSparseResources()) imageCreateStruct.flags |= VK_IMAGE_CREATE_SPARSE_BINDING_BIT;
 
 	VkResult result = vkCreateImage(cachedInstance->device, &imageCreateStruct, nullptr, &image);
 	if (result != VK_SUCCESS) throw std::runtime_error("Could not create image");
@@ -2866,13 +2982,10 @@ void HIGHOMEGA::GL::ImageClass::CreateMemoryForImage()
 
 	vkGetImageMemoryRequirements(cachedInstance->device, image, &memReqs);
 	getMemoryType(cachedInstance, memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &mem_alloc.memoryTypeIndex);
-
-	unsigned long long offset, len;
-	VkDeviceMemory memPtr;
+	
 	try
 	{
-		subAllocId = AllocMem(cachedInstance->device, mem_alloc, memReqs, IMAGE, &memPtr, &offset, &len);
-		typeForSubAlloc = mem_alloc.memoryTypeIndex;
+		subAllocs = AllocMem(cachedInstance->device, mem_alloc, memReqs, IMAGE, cachedInstance->SupportsSparseResources());
 		haveSubAlloc = true;
 	}
 	catch (...)
@@ -2882,8 +2995,41 @@ void HIGHOMEGA::GL::ImageClass::CreateMemoryForImage()
 	}
 
 	VkResult result;
-	{std::unique_lock <std::mutex> lk(mem_manager_mutex);
-	result = vkBindImageMemory(cachedInstance->device, image, memPtr, offset); }
+	if (cachedInstance->SupportsSparseResources())
+	{
+		std::unique_lock <std::mutex> lk(mem_manager_mutex);
+		std::unique_lock <std::mutex> lk2(cachedInstance->queue_mutex);
+		FenceClass sparseFence;
+		sparseFence.Fence(cachedInstance);
+		sparseFence.Reset();
+		VkSparseImageOpaqueMemoryBindInfo imageMemoryBinds;
+		imageMemoryBinds.image = image;
+		std::vector<VkSparseMemoryBind> memoryBinds;
+		unsigned long long resourceOffset = 0ull;
+		for (std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>& curSubAlloc : subAllocs)
+		{
+			VkSparseMemoryBind curImgBind = {};
+			curImgBind.memory = curSubAlloc.first->mem;
+			curImgBind.memoryOffset = (VkDeviceSize)curSubAlloc.second.offset;
+			curImgBind.size = (VkDeviceSize)curSubAlloc.second.len;
+			curImgBind.resourceOffset = (VkDeviceSize)resourceOffset;
+			resourceOffset += curSubAlloc.second.len;
+			memoryBinds.push_back(curImgBind);
+		}
+		imageMemoryBinds.bindCount = (uint32_t)memoryBinds.size();
+		imageMemoryBinds.pBinds = memoryBinds.data();
+		VkBindSparseInfo vkBindSparseInfo = {};
+		vkBindSparseInfo.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
+		vkBindSparseInfo.imageOpaqueBindCount = 1;
+		vkBindSparseInfo.pImageOpaqueBinds = &imageMemoryBinds;
+		result = vkQueueBindSparse(cachedInstance->submissionQueue, 1, &vkBindSparseInfo, sparseFence.fence);
+		sparseFence.Wait();
+	}
+	else
+	{
+		std::unique_lock <std::mutex> lk(mem_manager_mutex);
+		result = vkBindImageMemory(cachedInstance->device, image, subAllocs.begin()->first->mem, subAllocs.begin()->second.offset);
+	}
 	if (result != VK_SUCCESS) { RemovePast(); throw std::runtime_error("Could not bind image to memory"); }
 }
 
@@ -2923,8 +3069,7 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 		throw std::runtime_error("We do not have a pointer to the Vulkan instance");
 	}
 
-	{std::unique_lock<std::mutex> lk(cachedInstance->queue_mutex);
-	if (haveKTXVulkanTexture) ktxVulkanTexture_Destruct(&ktxVulkanTexture, cachedInstance->ktxVDI.device, nullptr); }
+	if (haveKTXVulkanTexture) ktxVulkanTexture_Destruct(&ktxVulkanTexture, cachedInstance->ktxVDI.device, nullptr);
 	if (haveImageView) vkDestroyImageView(cachedInstance->device, view, nullptr);
 	for (VkImageView & curView : layerView) {
 		vkDestroyImageView(cachedInstance->device, curView, nullptr);
@@ -2940,7 +3085,7 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 		}}
 		stagingBufferPtr = nullptr;
 	}
-	if (haveSubAlloc) FreeMem(subAllocId, IMAGE, typeForSubAlloc, cachedInstance->device);
+	if (haveSubAlloc) FreeMem(subAllocs, cachedInstance->device);
 	if (haveImage) vkDestroyImage(cachedInstance->device, image, nullptr);
 	if (haveSampler) vkDestroySampler(cachedInstance->device, sampler, nullptr);
 	if (downloadData) delete[] downloadData;
@@ -3199,7 +3344,6 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 	}
 	else if (dataType == IMAGE_DATA_KTX)
 	{
-		{std::unique_lock<std::mutex> lk(cachedInstance->queue_mutex);
 		ktxTexture2* kTexture;
 		KTX_error_code result = ktxTexture_CreateFromMemory(data, dataSize, KTX_TEXTURE_CREATE_NO_FLAGS, (ktxTexture**)&kTexture);
 		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxTexture from ktx file"); }
@@ -3209,9 +3353,10 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 			result = ktxTexture2_TranscodeBasis(kTexture, KTX_TTF_BC3_RGBA, 0);
 			if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error transcoding ktx file to BC3"); }
 		}
+		{std::unique_lock<std::mutex> lk(cachedInstance->queue_mutex);
 		result = ktxTexture_VkUploadEx((ktxTexture*)kTexture, &cachedInstance->ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxVulkanTexture from ktx file"); }
-		ktxTexture_Destroy((ktxTexture*)kTexture); }
+		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxVulkanTexture from ktx file"); }}
+		ktxTexture_Destroy((ktxTexture*)kTexture);
 
 		haveKTXVulkanTexture = true;
 
@@ -3294,19 +3439,19 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 	catch (...) { RemovePast(); throw std::runtime_error("Could not create and bind memory for image"); }
 
 	{std::unique_lock <std::mutex> lk(stagingBuffers.mtx);
-	if (stagingBuffers.dir.find(std::this_thread::get_id()) == stagingBuffers.dir.end() || stagingBuffers.dir[std::this_thread::get_id()].elem->getSize() < data_size)
+	if (stagingBuffers.dir.find(ThreadID) == stagingBuffers.dir.end() || stagingBuffers.dir[ThreadID].elem->getSize() < data_size)
 	{
-		if (stagingBuffers.dir.find(std::this_thread::get_id()) != stagingBuffers.dir.end())
-			delete stagingBuffers.dir[std::this_thread::get_id()].elem;
+		if (stagingBuffers.dir.find(ThreadID) != stagingBuffers.dir.end())
+			delete stagingBuffers.dir[ThreadID].elem;
 		else
 		{
-			stagingBuffers.dir[std::this_thread::get_id()].elemCount = 0;
-			stagingBuffers.dir[std::this_thread::get_id()].keyRef = std::this_thread::get_id();
+			stagingBuffers.dir[ThreadID].elemCount = 0;
+			stagingBuffers.dir[ThreadID].keyRef = ThreadID;
 		}
-		stagingBuffers.dir[std::this_thread::get_id()].elem = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_EXCLUSIVE, MODE_CREATE, USAGE_SRC, ptrToInstance, nullptr, data_size);
+		stagingBuffers.dir[ThreadID].elem = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_EXCLUSIVE, MODE_CREATE, USAGE_SRC, ptrToInstance, nullptr, data_size);
 	}
-	stagingBuffers.dir[std::this_thread::get_id()].elemCount++;
-	stagingBufferPtr = &stagingBuffers.dir[std::this_thread::get_id()]; }
+	stagingBuffers.dir[ThreadID].elemCount++;
+	stagingBufferPtr = &stagingBuffers.dir[ThreadID]; }
 
 	stagingBufferPtr->elem->UploadSubData(0, feedData, data_size);
 
@@ -4410,22 +4555,22 @@ void HIGHOMEGA::GL::DescriptorSets::WriteDescriptorSets(std::vector<ShaderResour
 	descriptorPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 
 	{std::lock_guard<std::mutex> lk(descriptorPools.mtx);
-	if (descriptorPools.dir[std::this_thread::get_id()].elem.size() == 0)
+	if (descriptorPools.dir[ThreadID].elem.size() == 0)
 	{
-		descriptorPools.dir[std::this_thread::get_id()].elem.emplace_back();
+		descriptorPools.dir[ThreadID].elem.emplace_back();
 
-		VkResult result = vkCreateDescriptorPool(ptrToInstance->device, &descriptorPoolInfo, nullptr, &descriptorPools.dir[std::this_thread::get_id()].elem.back());
+		VkResult result = vkCreateDescriptorPool(ptrToInstance->device, &descriptorPoolInfo, nullptr, &descriptorPools.dir[ThreadID].elem.back());
 		if (result != VK_SUCCESS) { RemovePast(); throw std::runtime_error("Could not create descriptor pool"); }
 
-		descriptorPools.dir[std::this_thread::get_id()].elemCount = 1;
-		descriptorPools.dir[std::this_thread::get_id()].keyRef = std::this_thread::get_id();
+		descriptorPools.dir[ThreadID].elemCount = 1;
+		descriptorPools.dir[ThreadID].keyRef = ThreadID;
 		writtenOnce = true;
 	}
 	else
 	{
-		if (!writtenOnce) { descriptorPools.dir[std::this_thread::get_id()].elemCount++; writtenOnce = true; }
+		if (!writtenOnce) { descriptorPools.dir[ThreadID].elemCount++; writtenOnce = true; }
 	}
-	descriptorPoolPtr = &descriptorPools.dir[std::this_thread::get_id()]; }
+	descriptorPoolPtr = &descriptorPools.dir[ThreadID];}
 
 	poolObject = descriptorPoolPtr->elem.back();
 
@@ -4453,13 +4598,13 @@ void HIGHOMEGA::GL::DescriptorSets::WriteDescriptorSets(std::vector<ShaderResour
 	{
 		{std::lock_guard<std::mutex> lk(descriptorPools.mtx);
 
-		descriptorPools.dir[std::this_thread::get_id()].elem.emplace_back();
+		descriptorPools.dir[ThreadID].elem.emplace_back();
 
-		VkResult result = vkCreateDescriptorPool(ptrToInstance->device, &descriptorPoolInfo, nullptr, &descriptorPools.dir[std::this_thread::get_id()].elem.back());
+		VkResult result = vkCreateDescriptorPool(ptrToInstance->device, &descriptorPoolInfo, nullptr, &descriptorPools.dir[ThreadID].elem.back());
 		if (result != VK_SUCCESS) { RemovePast(); throw std::runtime_error("Could not create descriptor pool"); }
 
-		if (!writtenOnce) { descriptorPools.dir[std::this_thread::get_id()].elemCount++; writtenOnce = true; }
-		descriptorPoolPtr = &descriptorPools.dir[std::this_thread::get_id()]; }
+		if (!writtenOnce) { descriptorPools.dir[ThreadID].elemCount++; writtenOnce = true; }
+		descriptorPoolPtr = &descriptorPools.dir[ThreadID];}
 
 		allocInfo.descriptorPool = descriptorPoolPtr->elem.back();
 		poolObject = descriptorPoolPtr->elem.back();
