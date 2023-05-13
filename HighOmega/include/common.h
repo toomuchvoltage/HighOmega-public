@@ -55,13 +55,13 @@ namespace HIGHOMEGA
 	public:
 		struct value
 		{
-			std::thread::id keyRef;
+			unsigned long long keyRef;
 			T elem;
 			unsigned int elemCount;
 		};
 
 		std::mutex mtx;
-		std::unordered_map<std::thread::id, value> dir;
+		std::unordered_map<unsigned long long, value> dir;
 	};
 };
 
