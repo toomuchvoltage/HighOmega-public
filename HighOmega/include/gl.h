@@ -486,6 +486,7 @@ namespace HIGHOMEGA
 			friend class DescriptorSets;
 		private:
 			ThreadLocalCache <BufferClass *>::value *stagingBufferPtr = nullptr;
+			BufferClass* uploadBuffer = nullptr;
 
 			InstanceClass *cachedInstance;
 			bool instanceEverSet;
@@ -495,7 +496,7 @@ namespace HIGHOMEGA
 			VkImage image;
 			VkImageView view;
 			std::vector <VkImageView> layerView;
-			CommandBuffer clearCmdBuffer, uploadCmdBuffer, copyCmdBuffer, downloadCmdBuffer;
+			CommandBuffer clearCmdBuffer, setupStandAloneCmdBuffer, setupTextureCmdBuffer, uploadCmdBuffer, downloadCmdBuffer, copyCmdBuffer;
 			BufferClass downloadBuffer;
 
 			bool usedAsStorageTarget, uploadedTexture;
@@ -541,12 +542,13 @@ namespace HIGHOMEGA
 			void CreateCubeMap(InstanceClass & ptrToInstance, FORMAT inpFormat, int w, int h);
 			bool CreateTexture(InstanceClass & ptrToInstance, std::string belong, std::string fileName, unsigned int inD = 1, bool inIs3D = false, bool inIsArray = false, bool isCube = false, bool doMipMapping = true, FORMAT inpFormat = R8G8B8A8UN);
 			bool CreateTexture(InstanceClass & ptrToInstance, unsigned int inW, unsigned int inH, unsigned char *inData, unsigned int inD = 1, bool inIs3D = false, bool inIsArray = false, bool isCube = false, bool doMipMapping = true, FORMAT inpFormat = R8G8B8A8UN);
-			void ReuploadData(unsigned int inW, unsigned int inH, unsigned char *inData);
 			static void ClearColors(std::vector <ImageClass *> & images, ImageClearColor clearColor);
 			static void CopyImages(std::vector <ImageClass *> & copySource, std::vector <ImageClass *> & copyTarget);
 			void DownloadData();
+			void FreeDownloadedData();
 			unsigned char * DownloadedData();
 			unsigned int DownloadedDataSize();
+			void UploadData(unsigned char* inData, unsigned int inDataSize);
 			vec2 textureAtlasCoords;
 			int getWidth();
 			int getHeight();
