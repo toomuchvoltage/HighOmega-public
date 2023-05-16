@@ -4762,7 +4762,7 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::Render(float inpAlpha)
 	sprintf_s((char *)(&onScreenText[60 * 1]), 59, "FPS: %d", HIGHOMEGA::INSTRUMENTATION::FPSCounter::Report());
 	sprintf_s((char *)(&onScreenText[60 * 2]), 59, "Update: %s", updateInstrument.ResultsMs(51).c_str());
 
-	onScreenTextImage.ReuploadData(60, 5, onScreenText);
+	onScreenTextImage.UploadData(onScreenText, 60 * 5);
 
 	dofParams.blurDirection = 0.0f;
 	dofParams.invCoCDist = 1.0f / 10000000.0f;
@@ -4814,7 +4814,7 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::SetMidScreenMessage(bool mainPlayerOnL
 
 			curMidScreenTextType = CLIMB;
 			sprintf_s((char *)midScreenText, 90, midScrText.c_str());
-			midScreenTextImage.ReuploadData(30, 3, midScreenText);
+			midScreenTextImage.UploadData(midScreenText, 30 * 3);
 		}
 		midScreenAlphaTarget = 1.0f;
 	}
@@ -4829,7 +4829,7 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::SetMidScreenMessage(bool mainPlayerOnL
 		{
 			curMidScreenTextType = NONE;
 			memset(midScreenText, (int)(' '), 30 * 3);
-			midScreenTextImage.ReuploadData(30, 3, midScreenText);
+			midScreenTextImage.UploadData(midScreenText, 30 * 3);
 		}
 	}
 }
