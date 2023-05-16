@@ -2349,9 +2349,7 @@ void HIGHOMEGA::GL::BufferClass::BufferClassWithStaging(BUFFER_SHARING inpSharin
 	stagingBuffers.dir[ThreadID].elemCount++;
 	stagingBufferPtr = &stagingBuffers.dir[ThreadID];}
 	stagingBufferPtr->elem->UploadSubData(0, inpData, totalDataSize);
-	ThreadLocalCache <BufferClass *>::value *stagingBufferPtrCache = stagingBufferPtr;
 	Buffer(MEMORY_DEVICE_LOCAL, inpSharing, inpMode, USAGE_DST | inpUsage, inpInstance, nullptr, totalDataSize);
-	stagingBufferPtr = stagingBufferPtrCache;
 
 	VkBufferCopy copyRegion = {};
 
@@ -3085,6 +3083,7 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 		}}
 		stagingBufferPtr = nullptr;
 	}
+	if (uploadBuffer) delete uploadBuffer;
 	if (haveSubAlloc) FreeMem(subAllocs, cachedInstance->device);
 	if (haveImage) vkDestroyImage(cachedInstance->device, image, nullptr);
 	if (haveSampler) vkDestroySampler(cachedInstance->device, sampler, nullptr);
@@ -3102,6 +3101,7 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 	recordedDownloadCmdBuffer = false;
 	downloadBufferSize = 0u;
 	downloadData = nullptr;
+	uploadBuffer = nullptr;
 }
 
 HIGHOMEGA::GL::ImageClass::ImageClass()
@@ -3123,6 +3123,7 @@ HIGHOMEGA::GL::ImageClass::ImageClass()
 	recordedDownloadCmdBuffer = false;
 	downloadBufferSize = 0u;
 	downloadData = nullptr;
+	uploadBuffer = nullptr;
 }
 
 std::vector<ImageClass> HIGHOMEGA::GL::ImageClass::FromSwapChain(InstanceClass & inpInstance)
@@ -3216,16 +3217,6 @@ bool HIGHOMEGA::GL::ImageClass::CreateTexture(InstanceClass & ptrToInstance, uns
 	return true;
 }
 
-void HIGHOMEGA::GL::ImageClass::ReuploadData(unsigned int inW, unsigned int inH, unsigned char * inData)
-{
-	if (recordedUploadCmdBuffer)
-	{
-		stagingBufferPtr->elem->UploadSubData(0, inData, inW * inH * bpp);
-
-		uploadCmdBuffer.SubmitCommandBuffer();
-	}
-}
-
 void HIGHOMEGA::GL::ImageClass::CreateStandaloneImage(InstanceClass & ptrToInstance, bool useFormat, FORMAT inpFormat, int w, int h, int d, TEXTURE_DIM numDims, int numLayers, bool exclusiveShareMode, DEPTH_STENCIL_MODE depthStencilMode, bool createSampler, bool usedAsStorageTarget, bool createSetupCmdBuffer, bool linearFiltering, bool clampSamples, bool createCubeMap)
 {
 	cachedInstance = &ptrToInstance;
@@ -3236,7 +3227,7 @@ void HIGHOMEGA::GL::ImageClass::CreateStandaloneImage(InstanceClass & ptrToInsta
 
 	if (createSetupCmdBuffer)
 	{
-		try { uploadCmdBuffer.BeginCommandBuffer(*cachedInstance); }
+		try { setupStandAloneCmdBuffer.BeginCommandBuffer(*cachedInstance); }
 		catch (...) { RemovePast(); throw std::runtime_error("Could not begin setup cmd buffer for standalone image"); }
 	}
 
@@ -3257,11 +3248,11 @@ void HIGHOMEGA::GL::ImageClass::CreateStandaloneImage(InstanceClass & ptrToInsta
 	std::vector <VkImage *> imageInFrontOfBarrier;
 	imageInFrontOfBarrier.push_back(&image);
 
-	setImageLayout(createSetupCmdBuffer ? uploadCmdBuffer.cmdBuffers[0] : cachedInstance->cmdBuffers[0], imageInFrontOfBarrier,
-		(depthStencilMode != NONE) ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_COLOR_BIT,
-		VK_IMAGE_LAYOUT_UNDEFINED,
-		(depthStencilMode == SAMPLE_NONE) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL,
-		numLayers, 0, 1);
+	setImageLayout(createSetupCmdBuffer ? setupStandAloneCmdBuffer.cmdBuffers[0] : cachedInstance->cmdBuffers[0], imageInFrontOfBarrier,
+				   (depthStencilMode != NONE) ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_COLOR_BIT,
+				   VK_IMAGE_LAYOUT_UNDEFINED,
+				   (depthStencilMode == SAMPLE_NONE) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL,
+				   numLayers, 0, 1);
 
 	try
 	{
@@ -3293,10 +3284,10 @@ void HIGHOMEGA::GL::ImageClass::CreateStandaloneImage(InstanceClass & ptrToInsta
 
 	if (createSetupCmdBuffer)
 	{
-		try { uploadCmdBuffer.EndCommandBuffer(); }
+		try { setupStandAloneCmdBuffer.EndCommandBuffer(); }
 		catch (...) { RemovePast(); throw std::runtime_error("Could not end setup cmd buffer for standalone image"); }
 
-		try { uploadCmdBuffer.SubmitCommandBuffer(); }
+		try { setupStandAloneCmdBuffer.SubmitCommandBuffer(); }
 		catch (...) { RemovePast(); throw std::runtime_error("Could not submit setup cmd buffer for standalone image"); }
 	}
 }
@@ -3461,73 +3452,68 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 		feedData = nullptr;
 	}
 
-	if (!recordedUploadCmdBuffer)
+	std::vector<VkBufferImageCopy> bufferCopyRegions;
+
+	VkBufferImageCopy bufferCopyRegion = {};
+	bufferCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	bufferCopyRegion.imageSubresource.mipLevel = 0;
+	bufferCopyRegion.imageSubresource.baseArrayLayer = 0;
+	bufferCopyRegion.imageSubresource.layerCount = layers;
+	bufferCopyRegion.imageExtent.width = width;
+	bufferCopyRegion.imageExtent.height = height;
+	bufferCopyRegion.imageExtent.depth = depth;
+	bufferCopyRegion.bufferOffset = 0;
+
+	bufferCopyRegions.push_back(bufferCopyRegion);
+
+	try { setupTextureCmdBuffer.BeginCommandBuffer(*cachedInstance); }
+	catch (...) { RemovePast(); throw std::runtime_error("Could not begin setup cmd buffer for create texture"); }
+
+	std::vector <VkImage *> imageInFrontOfBarrier;
+	imageInFrontOfBarrier.push_back(&image);
+
+	setImageLayout(setupTextureCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, 0, mipLevels);
+
+	vkCmdCopyBufferToImage(setupTextureCmdBuffer.cmdBuffers[0], stagingBufferPtr->elem->buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)bufferCopyRegions.size(), bufferCopyRegions.data());
+
+	setImageLayout(setupTextureCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, 1);
+
+	for (int i = 1; i < (int)mipLevels; i++)
 	{
-		std::vector<VkBufferImageCopy> bufferCopyRegions;
+		VkImageBlit imageBlit{};
 
-		VkBufferImageCopy bufferCopyRegion = {};
-		bufferCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		bufferCopyRegion.imageSubresource.mipLevel = 0;
-		bufferCopyRegion.imageSubresource.baseArrayLayer = 0;
-		bufferCopyRegion.imageSubresource.layerCount = layers;
-		bufferCopyRegion.imageExtent.width = width;
-		bufferCopyRegion.imageExtent.height = height;
-		bufferCopyRegion.imageExtent.depth = depth;
-		bufferCopyRegion.bufferOffset = 0;
+		imageBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageBlit.srcSubresource.layerCount = layers;
+		imageBlit.srcSubresource.mipLevel = i - 1;
+		imageBlit.srcOffsets[0].x = 0;
+		imageBlit.srcOffsets[0].y = 0;
+		imageBlit.srcOffsets[0].z = 0;
+		imageBlit.srcOffsets[1].x = int32_t(max (width >> (i - 1), 1));
+		imageBlit.srcOffsets[1].y = int32_t(max (height >> (i - 1), 1));
+		imageBlit.srcOffsets[1].z = 1;
+		imageBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageBlit.dstSubresource.layerCount = layers;
+		imageBlit.dstSubresource.mipLevel = i;
+		imageBlit.dstOffsets[0].x = 0;
+		imageBlit.dstOffsets[0].y = 0;
+		imageBlit.dstOffsets[0].z = 0;
+		imageBlit.dstOffsets[1].x = int32_t(max (width >> i, 1));
+		imageBlit.dstOffsets[1].y = int32_t(max (height >> i, 1));
+		imageBlit.dstOffsets[1].z = 1;
 
-		bufferCopyRegions.push_back(bufferCopyRegion);
+		setImageLayout(setupTextureCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, i, 1);
 
-		try { uploadCmdBuffer.BeginCommandBuffer(*cachedInstance); }
-		catch (...) { RemovePast(); throw std::runtime_error("Could not begin setup cmd buffer for create texture"); }
+		vkCmdBlitImage(setupTextureCmdBuffer.cmdBuffers[0], image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageBlit, VK_FILTER_LINEAR);
 
-		std::vector <VkImage *> imageInFrontOfBarrier;
-		imageInFrontOfBarrier.push_back(&image);
-
-		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, 0, mipLevels);
-
-		vkCmdCopyBufferToImage(uploadCmdBuffer.cmdBuffers[0], stagingBufferPtr->elem->buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)bufferCopyRegions.size(), bufferCopyRegions.data());
-
-		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, 1);
-
-		for (int i = 1; i < (int)mipLevels; i++)
-		{
-			VkImageBlit imageBlit{};
-
-			imageBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			imageBlit.srcSubresource.layerCount = layers;
-			imageBlit.srcSubresource.mipLevel = i - 1;
-			imageBlit.srcOffsets[0].x = 0;
-			imageBlit.srcOffsets[0].y = 0;
-			imageBlit.srcOffsets[0].z = 0;
-			imageBlit.srcOffsets[1].x = int32_t(max(width >> (i - 1), 1));
-			imageBlit.srcOffsets[1].y = int32_t(max(height >> (i - 1), 1));
-			imageBlit.srcOffsets[1].z = 1;
-			imageBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			imageBlit.dstSubresource.layerCount = layers;
-			imageBlit.dstSubresource.mipLevel = i;
-			imageBlit.dstOffsets[0].x = 0;
-			imageBlit.dstOffsets[0].y = 0;
-			imageBlit.dstOffsets[0].z = 0;
-			imageBlit.dstOffsets[1].x = int32_t(max(width >> i, 1));
-			imageBlit.dstOffsets[1].y = int32_t(max(height >> i, 1));
-			imageBlit.dstOffsets[1].z = 1;
-
-			setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, i, 1);
-
-			vkCmdBlitImage(uploadCmdBuffer.cmdBuffers[0], image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageBlit, VK_FILTER_LINEAR);
-
-			setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, i, 1);
-		}
-
-		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 0, mipLevels);
-
-		try { uploadCmdBuffer.EndCommandBuffer(); }
-		catch (...) { RemovePast(); throw std::runtime_error("Could not end setup cmd buffer for create texture"); }
-
-		recordedUploadCmdBuffer = true;
+		setImageLayout(setupTextureCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, i, 1);
 	}
 
-	try { uploadCmdBuffer.SubmitCommandBuffer(); }
+	setImageLayout(setupTextureCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 0, mipLevels);
+
+	try { setupTextureCmdBuffer.EndCommandBuffer(); }
+	catch (...) { RemovePast(); throw std::runtime_error("Could not end setup cmd buffer for create texture"); }
+
+	try { setupTextureCmdBuffer.SubmitCommandBuffer(); }
 	catch (...) { RemovePast(); throw std::runtime_error("Could not submit setup cmd buffer for create texture"); }
 
 	bool enableAnisotropicFiltering = doMipMapping;
@@ -3592,7 +3578,7 @@ void HIGHOMEGA::GL::ImageClass::CopyImages(std::vector <ImageClass *> & copySour
 	if (!copySource[0]->recordedCopyCmdBuffer)
 	{
 		try { copySource[0]->copyCmdBuffer.BeginCommandBuffer(*(copySource[0]->cachedInstance)); }
-		catch (...) { throw std::runtime_error("Could not begin setup cmd buffer for copy image"); }
+		catch (...) { throw std::runtime_error("Could not begin setup cmd buffer for image to image copy"); }
 
 		std::vector <VkImage *> sourceImagesInFrontOfBarrier;
 		std::vector <VkImage *> targetImagesInFrontOfBarrier;
@@ -3627,17 +3613,19 @@ void HIGHOMEGA::GL::ImageClass::CopyImages(std::vector <ImageClass *> & copySour
 		copySource[0]->setImageLayout(copySource[0]->copyCmdBuffer.cmdBuffers[0], targetImagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, copySource[0]->layers, 0, copySource[0]->mipLevels);
 
 		try { copySource[0]->copyCmdBuffer.EndCommandBuffer(); }
-		catch (...) { throw std::runtime_error("Could not end setup cmd buffer for copy image"); }
+		catch (...) { throw std::runtime_error("Could not end setup cmd buffer for image to image copy"); }
 
 		copySource[0]->recordedCopyCmdBuffer = true;
 	}
 
 	try { copySource[0]->copyCmdBuffer.SubmitCommandBuffer(); }
-	catch (...) { throw std::runtime_error("Could not submit setup cmd buffer for copy image"); }
+	catch (...) { throw std::runtime_error("Could not submit setup cmd buffer for image to image copy"); }
 }
 
 void HIGHOMEGA::GL::ImageClass::DownloadData()
 {
+	if (cachedInstance == nullptr) throw std::runtime_error("We do not have a pointer to the Vulkan instance for image download");
+
 	if (downloadBufferSize == 0)
 	{
 		downloadBufferSize = width * height * depth * layers * FormatSize(format);
@@ -3666,12 +3654,14 @@ void HIGHOMEGA::GL::ImageClass::DownloadData()
 		std::vector <VkImage *> imageInFrontOfBarrier;
 		imageInFrontOfBarrier.push_back(&image);
 
-		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, mipLevels);
+		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, mipLevels);
 
 		vkCmdCopyImageToBuffer(downloadCmdBuffer.cmdBuffers[0], image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, downloadBuffer.buffer, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
 
+		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
+
 		try { downloadCmdBuffer.EndCommandBuffer(); }
-		catch (...) { throw std::runtime_error("Could not begin setup cmd buffer for copy to buffer"); }
+		catch (...) { throw std::runtime_error("Could not end setup cmd buffer for copy to buffer"); }
 
 		recordedDownloadCmdBuffer = true;
 	}
@@ -3683,6 +3673,12 @@ void HIGHOMEGA::GL::ImageClass::DownloadData()
 	downloadBuffer.DownloadSubData(0, downloadData, downloadBufferSize);
 }
 
+void HIGHOMEGA::GL::ImageClass::FreeDownloadedData()
+{
+	if (downloadData) delete[] downloadData;
+	downloadData = nullptr;
+}
+
 unsigned char * HIGHOMEGA::GL::ImageClass::DownloadedData()
 {
 	return downloadData;
@@ -3691,6 +3687,56 @@ unsigned char * HIGHOMEGA::GL::ImageClass::DownloadedData()
 unsigned int HIGHOMEGA::GL::ImageClass::DownloadedDataSize()
 {
 	return downloadBufferSize;
+}
+
+void HIGHOMEGA::GL::ImageClass::UploadData(unsigned char* inData, unsigned int inDataSize)
+{
+	if (cachedInstance == nullptr) throw std::runtime_error("We do not have a pointer to the Vulkan instance for image upload");
+
+	unsigned int imageDataSize = width * height * depth * layers * FormatSize(format);
+	if (inDataSize > imageDataSize) throw std::runtime_error("Image too small for uploaded data");
+
+	if (!uploadBuffer)
+		uploadBuffer = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SRC, *cachedInstance, (void*)inData, inDataSize);
+	else
+		uploadBuffer->UploadSubData(0, inData, inDataSize);
+
+	if (!recordedUploadCmdBuffer)
+	{
+		std::vector<VkBufferImageCopy> imageCopyRegions;
+
+		VkBufferImageCopy imageCopyRegion = {};
+		imageCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageCopyRegion.imageSubresource.mipLevel = 0;
+		imageCopyRegion.imageSubresource.baseArrayLayer = 0;
+		imageCopyRegion.imageSubresource.layerCount = layers;
+		imageCopyRegion.imageExtent.width = width;
+		imageCopyRegion.imageExtent.height = height;
+		imageCopyRegion.imageExtent.depth = depth;
+		imageCopyRegion.bufferOffset = 0;
+
+		imageCopyRegions.push_back(imageCopyRegion);
+
+		try { uploadCmdBuffer.BeginCommandBuffer(*cachedInstance); }
+		catch (...) { throw std::runtime_error("Could not begin setup cmd buffer for copy to image"); }
+
+		std::vector <VkImage*> imageInFrontOfBarrier;
+		imageInFrontOfBarrier.push_back(&image);
+
+		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, 0, mipLevels);
+
+		vkCmdCopyBufferToImage(uploadCmdBuffer.cmdBuffers[0], uploadBuffer->buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
+
+		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
+
+		try { uploadCmdBuffer.EndCommandBuffer(); }
+		catch (...) { throw std::runtime_error("Could not end setup cmd buffer for copy to image"); }
+
+		recordedUploadCmdBuffer = true;
+	}
+
+	try { uploadCmdBuffer.SubmitCommandBuffer(); }
+	catch (...) { throw std::runtime_error("Could not submit setup cmd buffer for copy to image"); }
 }
 
 int HIGHOMEGA::GL::ImageClass::getWidth()
