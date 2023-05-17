@@ -3083,7 +3083,7 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 		}}
 		stagingBufferPtr = nullptr;
 	}
-	if (uploadBuffer) delete uploadBuffer;
+	if (loadedDataBuffer) delete loadedDataBuffer;
 	if (haveSubAlloc) FreeMem(subAllocs, cachedInstance->device);
 	if (haveImage) vkDestroyImage(cachedInstance->device, image, nullptr);
 	if (haveSampler) vkDestroySampler(cachedInstance->device, sampler, nullptr);
@@ -3099,9 +3099,8 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 	recordedUploadCmdBuffer = false;
 	recordedCopyCmdBuffer = false;
 	recordedDownloadCmdBuffer = false;
-	downloadBufferSize = 0u;
 	downloadData = nullptr;
-	uploadBuffer = nullptr;
+	loadedDataBuffer = nullptr;
 }
 
 HIGHOMEGA::GL::ImageClass::ImageClass()
@@ -3121,9 +3120,8 @@ HIGHOMEGA::GL::ImageClass::ImageClass()
 	recordedUploadCmdBuffer = false;
 	recordedCopyCmdBuffer = false;
 	recordedDownloadCmdBuffer = false;
-	downloadBufferSize = 0u;
 	downloadData = nullptr;
-	uploadBuffer = nullptr;
+	loadedDataBuffer = nullptr;
 }
 
 std::vector<ImageClass> HIGHOMEGA::GL::ImageClass::FromSwapChain(InstanceClass & inpInstance)
@@ -3626,11 +3624,8 @@ void HIGHOMEGA::GL::ImageClass::DownloadData()
 {
 	if (cachedInstance == nullptr) throw std::runtime_error("We do not have a pointer to the Vulkan instance for image download");
 
-	if (downloadBufferSize == 0)
-	{
-		downloadBufferSize = width * height * depth * layers * FormatSize(format);
-		downloadBuffer.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO | USAGE_DST, Instance, nullptr, downloadBufferSize);
-	}
+	unsigned int downloadBufferSize = width * height * depth * layers * FormatSize(format);
+	if (!loadedDataBuffer) loadedDataBuffer = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO | USAGE_DST, Instance, nullptr, downloadBufferSize);
 
 	if (!recordedDownloadCmdBuffer)
 	{
@@ -3656,7 +3651,7 @@ void HIGHOMEGA::GL::ImageClass::DownloadData()
 
 		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, mipLevels);
 
-		vkCmdCopyImageToBuffer(downloadCmdBuffer.cmdBuffers[0], image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, downloadBuffer.buffer, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
+		vkCmdCopyImageToBuffer(downloadCmdBuffer.cmdBuffers[0], image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, loadedDataBuffer->buffer, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
 
 		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
 
@@ -3669,13 +3664,15 @@ void HIGHOMEGA::GL::ImageClass::DownloadData()
 	try { downloadCmdBuffer.SubmitCommandBuffer(); }
 	catch (...) { throw std::runtime_error("Could not submit setup cmd buffer for copy to buffer"); }
 
-	if (!downloadData) downloadData = new unsigned char[downloadBufferSize];
-	downloadBuffer.DownloadSubData(0, downloadData, downloadBufferSize);
+	if (!downloadData) downloadData = new unsigned char[loadedDataBuffer->getSize()];
+	loadedDataBuffer->DownloadSubData(0, downloadData, loadedDataBuffer->getSize());
 }
 
-void HIGHOMEGA::GL::ImageClass::FreeDownloadedData()
+void HIGHOMEGA::GL::ImageClass::FreeLoadedData()
 {
+	if (loadedDataBuffer) delete loadedDataBuffer;
 	if (downloadData) delete[] downloadData;
+	loadedDataBuffer = nullptr;
 	downloadData = nullptr;
 }
 
@@ -3686,7 +3683,8 @@ unsigned char * HIGHOMEGA::GL::ImageClass::DownloadedData()
 
 unsigned int HIGHOMEGA::GL::ImageClass::DownloadedDataSize()
 {
-	return downloadBufferSize;
+	if (!loadedDataBuffer) return 0;
+	return loadedDataBuffer->getSize();
 }
 
 void HIGHOMEGA::GL::ImageClass::UploadData(unsigned char* inData, unsigned int inDataSize)
@@ -3696,10 +3694,8 @@ void HIGHOMEGA::GL::ImageClass::UploadData(unsigned char* inData, unsigned int i
 	unsigned int imageDataSize = width * height * depth * layers * FormatSize(format);
 	if (inDataSize > imageDataSize) throw std::runtime_error("Image too small for uploaded data");
 
-	if (!uploadBuffer)
-		uploadBuffer = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SRC, *cachedInstance, (void*)inData, inDataSize);
-	else
-		uploadBuffer->UploadSubData(0, inData, inDataSize);
+	if (!loadedDataBuffer) loadedDataBuffer = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SRC, *cachedInstance, nullptr, imageDataSize);
+	loadedDataBuffer->UploadSubData(0, inData, inDataSize);
 
 	if (!recordedUploadCmdBuffer)
 	{
@@ -3725,7 +3721,7 @@ void HIGHOMEGA::GL::ImageClass::UploadData(unsigned char* inData, unsigned int i
 
 		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, 0, mipLevels);
 
-		vkCmdCopyBufferToImage(uploadCmdBuffer.cmdBuffers[0], uploadBuffer->buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
+		vkCmdCopyBufferToImage(uploadCmdBuffer.cmdBuffers[0], loadedDataBuffer->buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
 
 		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
 

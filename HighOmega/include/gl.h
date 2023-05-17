@@ -486,7 +486,7 @@ namespace HIGHOMEGA
 			friend class DescriptorSets;
 		private:
 			ThreadLocalCache <BufferClass *>::value *stagingBufferPtr = nullptr;
-			BufferClass* uploadBuffer = nullptr;
+			BufferClass* loadedDataBuffer = nullptr;
 
 			InstanceClass *cachedInstance;
 			bool instanceEverSet;
@@ -497,7 +497,6 @@ namespace HIGHOMEGA
 			VkImageView view;
 			std::vector <VkImageView> layerView;
 			CommandBuffer clearCmdBuffer, setupStandAloneCmdBuffer, setupTextureCmdBuffer, uploadCmdBuffer, downloadCmdBuffer, copyCmdBuffer;
-			BufferClass downloadBuffer;
 
 			bool usedAsStorageTarget, uploadedTexture;
 			bool is3D, isArray;
@@ -506,8 +505,7 @@ namespace HIGHOMEGA
 			int bpp;
 			unsigned int data_size;
 			FORMAT format;
-			unsigned int downloadBufferSize;
-			unsigned char *downloadData;
+			unsigned char *downloadData = nullptr;
 			std::vector<std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>> subAllocs;
 
 			bool haveKTXVulkanTexture;
@@ -545,7 +543,7 @@ namespace HIGHOMEGA
 			static void ClearColors(std::vector <ImageClass *> & images, ImageClearColor clearColor);
 			static void CopyImages(std::vector <ImageClass *> & copySource, std::vector <ImageClass *> & copyTarget);
 			void DownloadData();
-			void FreeDownloadedData();
+			void FreeLoadedData();
 			unsigned char * DownloadedData();
 			unsigned int DownloadedDataSize();
 			void UploadData(unsigned char* inData, unsigned int inDataSize);
