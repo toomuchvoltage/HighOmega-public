@@ -500,7 +500,7 @@ unsigned int HIGHOMEGA::RENDER::GraphicsModel::JFAWorkGroupZ()
 	return 4;
 }
 
-void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderItem>& updateItems, bool forceRefresh)
+void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderItem>& updateItems, bool forceRefresh, std::vector<std::string> cacheNames)
 {
 	if (RTInstance::Enabled()) return;
 
@@ -508,6 +508,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderIte
 	std::vector<ShaderResourceSet *> srsSet;
 	std::vector<BufferClass *> allVoxelizeParamBufs;
 	std::vector<ImageClass *> distFieldGenList;
+	std::vector<std::string> distFieldCacheNames;
 
 	csSet.push_back(new ComputeSubmission);
 
@@ -523,8 +524,9 @@ void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderIte
 		unsigned int offsetStage[2];
 	} JFAParams;
 
-	for (SubmittedRenderItem & curPair : updateItems)
+	for (unsigned int i = 0; i != updateItems.size(); i++)
 	{
+		SubmittedRenderItem& curPair = updateItems[i];
 		if (curPair.item->MaterialGeomMap.size() == 0)
 		{
 			if (curPair.item->sdf) delete curPair.item->sdf;
@@ -547,12 +549,23 @@ void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderIte
 		{
 			curPair.item->sdf = new ImageClass();
 			curPair.item->sdf->CreateImageStore(Instance, R8G8B8A8UN, (int)ceilf((modMax.x - modMin.x) / HIGHOMEGA_ZONE_VOXELIZE_COARSENESS), (int)ceilf((modMax.y - modMin.y) / HIGHOMEGA_ZONE_VOXELIZE_COARSENESS), (int)ceilf((modMax.z - modMin.z) / HIGHOMEGA_ZONE_VOXELIZE_COARSENESS), _3D, false);
+			unsigned char* cacheContent = nullptr;
+			unsigned int cacheSize = 0;
+			ResourceLoader::LOAD_LOCATION loadLocation;
+			ResourceLoader::LOAD_CHOSEN_ASSET chosenAsset;
+			if (cacheNames.size() > 0 && ResourceLoader::Load("", cacheNames[i], &cacheContent, cacheSize, loadLocation, chosenAsset) == ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS)
+			{
+				curPair.item->sdf->UploadData(cacheContent, cacheSize);
+				curPair.item->sdf->FreeLoadedData();
+				continue;
+			}
 		}
 		else
 			if (!forceRefresh) continue;
 		std::vector<ImageClass *> clearList;
 		clearList.push_back(curPair.item->sdf);
 		distFieldGenList.push_back(curPair.item->sdf);
+		if (cacheNames.size() > 0) distFieldCacheNames.push_back(cacheNames[i]);
 		curPair.item->sdf->ClearColors(clearList, ImageClearColor(vec3(0.0f), 0.0f));
 
 		for (std::pair <const MeshMaterial, std::list<GeometryClass>> & matGeomPair : curPair.item->MaterialGeomMap)
@@ -583,8 +596,9 @@ void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderIte
 
 	BufferClass JFAParamsBuf;
 	JFAParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, nullptr, (unsigned int)sizeof(JFAParams.offsetStage));
-	for (ImageClass *curImg : distFieldGenList)
+	for (unsigned int i = 0; i != distFieldGenList.size(); i++)
 	{
+		ImageClass* curImg = distFieldGenList[i];
 		csSet.push_back(new ComputeSubmission);
 		srsSet.push_back(new ShaderResourceSet);
 		ImageClass JFAImg;
@@ -624,6 +638,13 @@ void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderIte
 		JFAParams.offsetStage[1] = 2;
 		JFAParamsBuf.UploadSubData(0, JFAParams.offsetStage, sizeof(JFAParams));
 		csSet.back()->Submit();
+
+		if (distFieldCacheNames.size() > 0)
+		{
+			curImg->DownloadData();
+			ResourceSaver::SaveBlob (distFieldCacheNames[i], curImg->DownloadedData(), curImg->DownloadedDataSize());
+			curImg->FreeLoadedData();
+		}
 	}
 
 	for (BufferClass * curBuf : allVoxelizeParamBufs)
