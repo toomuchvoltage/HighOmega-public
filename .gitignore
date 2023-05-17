@@ -7,6 +7,7 @@ HighOmega.sdf
 *.ipch
 HighOmega/highomega_log.txt
 *.obj
+*.matdf
 *.ktx
 *.exe
 *.suo
