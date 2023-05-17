@@ -228,7 +228,7 @@ namespace HIGHOMEGA
 			};
 			std::unordered_map <std::string, NEEHintData> allNEEHintData;
 			mat4 modelTransMat, modelTransMatInv;
-			static void UpdateSDFs(std::vector<SubmittedRenderItem> & updateItems, bool forceRefresh = false);
+			static void UpdateSDFs(std::vector<SubmittedRenderItem>& updateItems, bool forceRefresh = false, std::vector<std::string> cacheNames = {});
 
 		private:
 			static unsigned int VoxelizeWorkGroupX();
