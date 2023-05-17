@@ -626,15 +626,17 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 			}
 
 			std::vector<SubmittedRenderItem> sri;
+			std::vector<std::string> cacheNames;
 			for (unsigned int i = 0; i != zoneStreamingPtr->foundZonesCached.size(); i++)
 			{
 				std::string& foundZone = zoneStreamingPtr->foundZonesCached[i];
 				SubmittedRenderItem curSri;
 				curSri.item = zoneStreamingPtr->loadedZones[foundZone].graphicsModel;
 				sri.push_back(curSri);
+				cacheNames.push_back(zoneStreamingPtr->zoneLocation + foundZone + ".matdf");
 			}
 
-			GraphicsModel::UpdateSDFs(sri);
+			GraphicsModel::UpdateSDFs(sri, false, cacheNames);
 		}
 
 		zoneStreamingPtr->producedZones[threadId] = true;
