@@ -196,9 +196,7 @@ void HIGHOMEGA::RENDER::MeshMaterial::ReduceClaims()
 		{
 			if (curSubToAllPSODS.second.find(matStringKey) == curSubToAllPSODS.second.end()) continue;
 			for (std::pair <std::string const, DescriptorSets*>& curAllPSODS : curSubToAllPSODS.second[matStringKey])
-				delete curAllPSODS.second;
-			curSubToAllPSODS.second.erase(matStringKey);
-			curSubToAllPSODS.first->resourcesChanged = true;
+				curAllPSODS.second->SetDirty(true);
 			curSubToAllPSODS.first->redoSubmissionData = true;
 		}
 	}
@@ -1909,7 +1907,7 @@ HIGHOMEGA::RENDER::GroupedRasterSubmission::GroupedRasterSubmission()
 	frameBuffer = nullptr;
 	shaders.clear();
 	recordedCmdBuf = false;
-	resourcesChanged = false;
+	allResourcesChanged = false;
 	cullingResourcesChanged = false;
 	cullingCompute = nullptr;
 	cullingResourceSet = nullptr;
@@ -2212,7 +2210,7 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 		sourceBVHId = curBVHId;
 		if (recordedCmdBuf)
 		{
-			resourcesChanged = true;
+			allResourcesChanged = true;
 			redoSubmissionData = true;
 		}
 	}
@@ -2223,7 +2221,7 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 		sourceSDFBVHId = curSDFBVHId;
 		if (recordedCmdBuf)
 		{
-			resourcesChanged = true;
+			allResourcesChanged = true;
 			redoSubmissionData = true;
 		}
 	}
@@ -2233,7 +2231,7 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 		matGeomSourceRecordID = takenMatGeomBindings->cmdRecordId;
 		if (recordedCmdBuf)
 		{
-			resourcesChanged = true;
+			allResourcesChanged = true;
 			redoSubmissionData = true;
 		}
 	}
@@ -2321,13 +2319,25 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 			if (SSBOLargeAlignmentSize > SSBO.getSize())
 			{
 				SSBO.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO, Instance, nullptr, SSBOLargeAlignmentSize);
-				resourcesChanged = true;
+				allResourcesChanged = true;
 			}
 			SSBO.UploadSubData(0, SSBOdata.data(), (unsigned int)SSBOdata.size() * sizeof(InstanceProperties));
 		}
 		else
 		{
-			if (SSBO.getSize() == 0) SSBO.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO, Instance, nullptr, (unsigned int)sizeof(InstanceProperties));
+			if (SSBO.getSize() == 0)
+			{
+				SSBO.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO, Instance, nullptr, (unsigned int)sizeof(InstanceProperties));
+				allResourcesChanged = true;
+			}
+		}
+
+		if (allResourcesChanged) {
+			std::lock_guard<std::mutex>lk(globalDSCache_mutex);
+			for (std::pair <std::string const, std::unordered_map <std::string, DescriptorSets*>>& curSubToAllPSODS : GroupedRasterSubmission::globalDSCache[this])
+				for (std::pair <std::string const, DescriptorSets*>& curAllPSODS : curSubToAllPSODS.second)
+					curAllPSODS.second->SetDirty(true);
+			allResourcesChanged = false;
 		}
 
 		if (doesCulling)
@@ -2450,7 +2460,7 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 					globalDSCache[this][matStringKey][rasterPSOKey] = new DescriptorSets(RasterPSODSL->DSL);
 					globalDSCache[this][matStringKey][rasterPSOKey]->WriteDescriptorSets(shaderResources);
 				}
-				else if (resourcesChanged)
+				else if (globalDSCache[this][matStringKey][rasterPSOKey]->GetDirty())
 				{
 					if (curResourcesRequested == resourcesRequested)
 					{
@@ -2483,6 +2493,7 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 					{
 						globalDSCache[this][matStringKey][rasterPSOKey]->RewriteDescriptorSets(shaderResources);
 					}
+					globalDSCache[this][matStringKey][rasterPSOKey]->SetDirty(false);
 				}
 				DSPtr = globalDSCache[this][matStringKey][rasterPSOKey];
 			}
@@ -2493,7 +2504,6 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 			curPairing.geom = curMatGeomPairing.geom;
 			PSO_DSL_DS_GeomPairings.push_back(curPairing);
 		}
-		resourcesChanged = false;
 		dynPipelineFlags.clear_color[0] = clearColor.x;
 		dynPipelineFlags.clear_color[1] = clearColor.y;
 		dynPipelineFlags.clear_color[2] = clearColor.z;
@@ -3289,7 +3299,6 @@ void HIGHOMEGA::RENDER::PASSES::ShadowMapScreenClass::Create(TriClass & PostProc
 	submission.Add(PostProcessTri.triModel);
 	submission.Create(Instance);
 
-	depthStencilAttach.CreateOffScreenDepthStencil(Instance, GatherPass.worldPosAttach.getWidth(), GatherPass.worldPosAttach.getHeight());
 	shadowMapScreen.CreateImageStore(Instance, R8G8B8A8UN, GatherPass.worldPosAttach.getWidth(), GatherPass.worldPosAttach.getHeight(), 1, _2D, false);
 
 	if (RTInstance::Enabled() && useHWRTIfAvailable)
@@ -3299,11 +3308,10 @@ void HIGHOMEGA::RENDER::PASSES::ShadowMapScreenClass::Create(TriClass & PostProc
 	}
 	else
 	{
-		frameBuffer.setWidth(depthStencilAttach.getWidth());
-		frameBuffer.setHeight(depthStencilAttach.getHeight());
+		frameBuffer.setWidth(GatherPass.worldPosAttach.getWidth());
+		frameBuffer.setHeight(GatherPass.worldPosAttach.getHeight());
 		PipelineFlags shadowScreenPF;
 		shadowScreenPF.depthTest = shadowScreenPF.depthWrite = false;
-		shadowScreenPF.changedDepthTest = shadowScreenPF.changedDepthWrite = true;
 		submission.SetDefaultPipelineFlags(shadowScreenPF);
 		frameBuffer.Create(OFF_SCREEN, Instance, Window);
 		submission.SetFrameBuffer(frameBuffer);
@@ -3332,12 +3340,19 @@ void HIGHOMEGA::RENDER::PASSES::ShadowMapScreenClass::Create(TriClass & PostProc
 
 	blurHAttach.CreateImageStore(Instance, R8G8B8A8UN, GatherPass.worldPosAttach.getWidth(), GatherPass.worldPosAttach.getHeight(), 1, _2D, false);
 
-	frameBufferH.SetDepthStencil(depthStencilAttach);
-	frameBufferV.SetDepthStencil(depthStencilAttach);
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthTest = false;
+	defPipelineFlags.depthWrite = false;
+	frameBufferH.setWidth(GatherPass.worldPosAttach.getWidth());
+	frameBufferH.setHeight(GatherPass.worldPosAttach.getHeight());
 	frameBufferH.Create(OFF_SCREEN, Instance, Window);
+	frameBufferV.setWidth(GatherPass.worldPosAttach.getWidth());
+	frameBufferV.setHeight(GatherPass.worldPosAttach.getHeight());
 	frameBufferV.Create(OFF_SCREEN, Instance, Window);
 	submissionH.SetFrameBuffer(frameBufferH);
 	submissionV.SetFrameBuffer(frameBufferV);
+	submissionH.SetDefaultPipelineFlags(defPipelineFlags);
+	submissionV.SetDefaultPipelineFlags(defPipelineFlags);
 
 	shaderH.Create("shaders/postprocess.vert.spv", "main", "shaders/gaussianSep.frag.spv", "main");
 	shaderV.Create("shaders/postprocess.vert.spv", "main", "shaders/gaussianSep.frag.spv", "main");
@@ -3941,13 +3956,16 @@ void HIGHOMEGA::RENDER::PASSES::GatherResolveClass::Create(VisibilityPassClass &
 	worldPosAttach.CreateOffScreenColorAttachment(Instance, R32G32B32A32F, VisibilityPass.visibilityTriInfo.getWidth(), VisibilityPass.visibilityTriInfo.getHeight(), false, false);
 	normalAttach.CreateOffScreenColorAttachment(Instance, R32G32B32A32F, VisibilityPass.visibilityTriInfo.getWidth(), VisibilityPass.visibilityTriInfo.getHeight(), false, false);
 
-	depthStencilAttach.CreateOffScreenDepthStencil(Instance, VisibilityPass.visibilityTriInfo.getWidth(), VisibilityPass.visibilityTriInfo.getHeight());
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthTest = false;
+	defPipelineFlags.depthWrite = false;
+
 	if (!simple) frameBuffer.AddColorAttachment(materialAttach);
 	frameBuffer.AddColorAttachment(worldPosAttach);
 	frameBuffer.AddColorAttachment(normalAttach);
-	frameBuffer.SetDepthStencil(depthStencilAttach);
 	frameBuffer.Create(OFF_SCREEN, Instance, Window);
 	submission.SetFrameBuffer(frameBuffer);
+	submission.SetDefaultPipelineFlags(defPipelineFlags);
 
 	shader.Create("shaders/postprocess.vert.spv", "main", simple ? "shaders/gatherresolvesimple.frag.spv" : "shaders/gatherresolve.frag.spv", "main");
 	shader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
@@ -3988,6 +4006,8 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Create(TriClass & PostProcessTri
 	PathTraceParams.timeTurnBlurDirectionRawLight[2] = 0.0f;
 	PathTraceParams.timeTurnBlurDirectionRawLight[3] = 0.0f;
 	PathTraceParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &PathTraceParams, (unsigned int)sizeof(PathTraceParams));
+	influence.factor = 1.0f;
+	influenceBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &influence, (unsigned int)sizeof(influence));
 
 	for (int i = 0; i != HIGHOMEGA_MAXIMUM_IRRADIANCE_CACHE_CASCADES; i++)
 		for (int j = 0; j != 6; j++)
@@ -4038,6 +4058,7 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Create(TriClass & PostProcessTri
 		shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 13, ShadowMapFar.frustum.Buffer);
 		shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 14, shadowBiasesBuf);
 		shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 15, SkyDome.rayleighMieBuf);
+		shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 16, influenceBuf);
 		submission.SetShader("default", shader);
 		submission.requestSDFBVH(*sdfBVHSubmission);
 
@@ -4067,6 +4088,13 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Create(TriClass & PostProcessTri
 
 void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Render(vec3 & currentViewer)
 {
+	if (influence.factor != 1.0f)
+	{
+		influence.factor += (1.0f - influence.factor) * 0.9f;
+		if (fabs(influence.factor - 1.0f) < 0.1f)
+			influence.factor = 1.0f;
+		influenceBuf.UploadSubData(0, &influence, sizeof(influence));
+	}
 	if ((currentViewer - viewerCached).length() > 100.0f)
 	{
 		radiosityMapsVec[0]->ClearColors(radiosityMapsVec, ImageClearColor(vec3(0.0f), 0.0f));
@@ -4075,6 +4103,8 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Render(vec3 & currentViewer)
 		PathTraceParams.radiosityMapCenterMotionFactor[1] = viewerCached.y;
 		PathTraceParams.radiosityMapCenterMotionFactor[2] = viewerCached.z;
 		PathTraceParamsBuf.UploadSubData(0, &PathTraceParams, sizeof(PathTraceParams));
+		influence.factor = 7.5f;
+		influenceBuf.UploadSubData(0, &influence, sizeof(influence));
 	}
 
 	shadowBiases.nearMinBias = shadowMapNearRef->samplingBias.x;
@@ -4147,6 +4177,21 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Render(vec3 & currentViewer)
 	else
 	{
 		submission.Render();
+		if (influence.factor == 7.5f)
+		{
+			PathTraceParams.timeTurnBlurDirectionRawLight[0] += 0.1f;
+			PathTraceParamsBuf.UploadSubData(0, &PathTraceParams, sizeof(PathTraceParams));
+			submission.Render();
+			PathTraceParams.timeTurnBlurDirectionRawLight[0] += 0.1f;
+			PathTraceParamsBuf.UploadSubData(0, &PathTraceParams, sizeof(PathTraceParams));
+			submission.Render();
+			PathTraceParams.timeTurnBlurDirectionRawLight[0] += 0.1f;
+			PathTraceParamsBuf.UploadSubData(0, &PathTraceParams, sizeof(PathTraceParams));
+			submission.Render();
+			PathTraceParams.timeTurnBlurDirectionRawLight[0] += 0.1f;
+			PathTraceParamsBuf.UploadSubData(0, &PathTraceParams, sizeof(PathTraceParams));
+			submission.Render();
+		}
 		glossSubmission.Render();
 	}
 }
@@ -4172,7 +4217,7 @@ HIGHOMEGA::RENDER::PASSES::BlueNoiseHolderClass::~BlueNoiseHolderClass()
 	*************Beginning of SauRay(TM) code*************
 	******************************************************
 
-	Copyright © 2023 TooMuchVoltage Software Inc. This notice shall always be coupled with any SauRay(TM) implementation and must be redistributed alongside it.
+	Copyright ï¿½ 2023 TooMuchVoltage Software Inc. This notice shall always be coupled with any SauRay(TM) implementation and must be redistributed alongside it.
 
 	This implementation of US20220219086A1 is provided royalty free for either of the following:
 
@@ -4406,13 +4451,15 @@ void HIGHOMEGA::RENDER::PASSES::TemporalAccumulateClass::Create(TriClass &PostPr
 	glossTemporalAccumulateResultAttach.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, PathTrace.glossTraceOutput.getWidth(), PathTrace.glossTraceOutput.getHeight(), false, false);
 	glossLightTrailAttach.CreateImageStore(Instance, R16G16B16A16F, PathTrace.glossTraceOutput.getWidth(), PathTrace.glossTraceOutput.getHeight(), HIGHOMEGA_TEMPORAL_TRAIL_AMOUNT, _3D, false);
 	worldPosCacheAttach.CreateImageStore(Instance, R16G16B16A16F, PathTrace.glossTraceOutput.getWidth(), PathTrace.glossTraceOutput.getHeight(), HIGHOMEGA_TEMPORAL_TRAIL_AMOUNT, _3D, false);
-	depthStencilAttach.CreateOffScreenDepthStencil(Instance, PathTrace.glossTraceOutput.getWidth(), PathTrace.glossTraceOutput.getHeight());
 
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthWrite = false;
+	defPipelineFlags.depthTest = false;
 	frameBuffer.AddColorAttachment(glossTemporalAccumulateResultAttach);
-	frameBuffer.SetDepthStencil(depthStencilAttach);
 	frameBuffer.Create(OFF_SCREEN, Instance, Window);
 
 	submission.SetFrameBuffer(frameBuffer);
+	submission.SetDefaultPipelineFlags(defPipelineFlags);
 
 	shader.Create("shaders/postprocess.vert.spv", "main", "shaders/temporalAccumulate.frag.spv", "main");
 	shader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
@@ -4459,14 +4506,18 @@ void HIGHOMEGA::RENDER::PASSES::SpatialDenoiseClass::Create(TriClass & PostProce
 	submissionV.Add(PostProcessTri.triModel);
 	submissionV.Create(Instance);
 
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthTest = false;
+	defPipelineFlags.depthWrite = false;
+
 	frameBufferH.AddColorAttachment(blurHAttach);
 	frameBufferV.AddColorAttachment(blurVAttach);
-	frameBufferH.SetDepthStencil(TemporalAccumulate.depthStencilAttach);
-	frameBufferV.SetDepthStencil(TemporalAccumulate.depthStencilAttach);
 	frameBufferH.Create(OFF_SCREEN, Instance, Window);
 	frameBufferV.Create(OFF_SCREEN, Instance, Window);
 	submissionH.SetFrameBuffer(frameBufferH);
+	submissionH.SetDefaultPipelineFlags(defPipelineFlags);
 	submissionV.SetFrameBuffer(frameBufferV);
+	submissionV.SetDefaultPipelineFlags(defPipelineFlags);
 
 	shaderH.Create("shaders/postprocess.vert.spv", "main", "shaders/glossBilateral.frag.spv", "main");
 	shaderV.Create("shaders/postprocess.vert.spv", "main", "shaders/glossBilateral.frag.spv", "main");
@@ -4516,10 +4567,12 @@ void HIGHOMEGA::RENDER::PASSES::SimpleGaussian::Create(TriClass & PostProcessTri
 
 	blurHAttach.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, outputWidth, outputHeight, true, true);
 	blurVAttach.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, outputWidth, outputHeight, true, true);
-	blurDSAttach.CreateOffScreenDepthStencil(Instance, outputWidth, outputHeight);
+
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthTest = false;
+	defPipelineFlags.depthWrite = false;
 
 	frameBufferH.AddColorAttachment(blurHAttach);
-	frameBufferH.SetDepthStencil(blurDSAttach);
 	frameBufferH.Create(OFF_SCREEN, Instance, Window);
 
 	if (displayVOnScreen)
@@ -4529,7 +4582,6 @@ void HIGHOMEGA::RENDER::PASSES::SimpleGaussian::Create(TriClass & PostProcessTri
 	else
 	{
 		frameBufferV.AddColorAttachment(blurVAttach);
-		frameBufferV.SetDepthStencil(blurDSAttach);
 		frameBufferV.Create(OFF_SCREEN, Instance, Window);
 		blurVSubmission.SetFrameBuffer(frameBufferV);
 	}
@@ -4540,6 +4592,9 @@ void HIGHOMEGA::RENDER::PASSES::SimpleGaussian::Create(TriClass & PostProcessTri
 	blurVSubmission.Create(Instance);
 
 	blurHSubmission.SetFrameBuffer(frameBufferH);
+
+	blurHSubmission.SetDefaultPipelineFlags(defPipelineFlags);
+	blurVSubmission.SetDefaultPipelineFlags(defPipelineFlags);
 
 	blurHShader.Create("shaders/postprocess.vert.spv", "main", "shaders/gaussianSepSimple.frag.spv", "main");
 	blurHShader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
@@ -4573,13 +4628,18 @@ void HIGHOMEGA::RENDER::PASSES::ModulateClass::Create(TriClass & PostProcessTri,
 {
 	modulatedOutput.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, ScreenSize.width, ScreenSize.height, false, true);
 	frameBuffer.AddColorAttachment(modulatedOutput);
-	frameBuffer.SetDepthStencil(GatherPass.depthStencilAttach);
 	frameBuffer.Create(OFF_SCREEN, Instance, Window);
 
 	submission.Add(PostProcessTri.triModel);
 	submission.Create(Instance);
 
 	submission.SetFrameBuffer(frameBuffer);
+
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthTest = false;
+	defPipelineFlags.depthWrite = false;
+
+	submission.SetDefaultPipelineFlags(defPipelineFlags);
 
 	std::vector<ShaderResource> radiosityMaps;
 	for (int i = 0; i != HIGHOMEGA_MAXIMUM_IRRADIANCE_CACHE_CASCADES; i++)
@@ -4648,20 +4708,23 @@ void HIGHOMEGA::RENDER::PASSES::NearScatteringClass::Create(TriClass & PostProce
 	if (blueNoise->getWidth() == 0) blueNoise->CreateTexture(Instance, "assets/common/", "bluenoise.tga", 1, false, false, false, false);
 
 	blurInput.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, outputSize, outputSize, true, true);
-	depthStencilAttach.CreateOffScreenDepthStencil(Instance, outputSize, outputSize);
 
 	nearScatteringParams.amount = WorldParams.GetLightShaftAmount();
 	nearScatteringParams.extinction = WorldParams.GetLightShaftExtinction();
 	nearScatteringParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &nearScatteringParams, (unsigned int)sizeof(nearScatteringParams));
 
 	frameBuffer.AddColorAttachment(blurInput);
-	frameBuffer.SetDepthStencil(depthStencilAttach);
 	frameBuffer.Create(OFF_SCREEN, Instance, Window);
 
 	submission.Add(PostProcessTri.triModel);
 	submission.Create(Instance);
 
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthTest = false;
+	defPipelineFlags.depthWrite = false;
+
 	submission.SetFrameBuffer(frameBuffer);
+	submission.SetDefaultPipelineFlags(defPipelineFlags);
 
 	shader.Create("shaders/postprocess.vert.spv", "main", "shaders/nearScattering.frag.spv", "main");
 	shader.AddResource(RESOURCE_UBO, VERTEX | FRAGMENT, 0, 0, PostProcessTri.triFrustum.Buffer);
@@ -4702,13 +4765,15 @@ void HIGHOMEGA::RENDER::PASSES::ScreenSpaceFXClass::Create(TriClass & PostProces
 	submission.Create(Instance);
 
 	ssfxOut.CreateOffScreenColorAttachment(Instance, R8G8B8A8UN, ScreenSize.width, ScreenSize.height, false, true);
-	depthStencilAttach.CreateOffScreenDepthStencil(Instance, ScreenSize.width, ScreenSize.height);
 
 	frameBuffer.AddColorAttachment(ssfxOut);
-	frameBuffer.SetDepthStencil(depthStencilAttach);
 	frameBuffer.Create(OFF_SCREEN, Instance, Window);
 
 	submission.SetFrameBuffer(frameBuffer);
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthTest = false;
+	defPipelineFlags.depthWrite = false;
+	submission.SetDefaultPipelineFlags(defPipelineFlags);
 
 	shader.Create("shaders/postprocess.vert.spv", "main", "shaders/ssfx.frag.spv", "main");
 	shader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
@@ -4767,11 +4832,9 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::Create(TriClass & PostProcessTri, Gath
 	midScreenAlphaTarget = 0.0f;
 	dofParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO, Instance, &dofParams, (unsigned int)sizeof(dofParams));
 
-	depthStencilAttach.CreateOffScreenDepthStencil(Instance, ScreenSize.width, ScreenSize.height);
 	dofHAttach.CreateOffScreenColorAttachment(Instance, R8G8B8A8UN, ScreenSize.width, ScreenSize.height, false, true);
 
 	frameBufferH.AddColorAttachment(dofHAttach);
-	frameBufferH.SetDepthStencil(depthStencilAttach);
 	frameBufferH.Create(OFF_SCREEN, Instance, Window);
 
 	dofHSubmission.Add(PostProcessTri.triModel);
@@ -4781,6 +4844,9 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::Create(TriClass & PostProcessTri, Gath
 
 	dofHSubmission.SetFrameBuffer(frameBufferH);
 	dofVSubmission.SetFrameBuffer(Instance.swapChainFrameBuffer());
+	PipelineFlags defPipelineFlags;
+	defPipelineFlags.depthTest = false;
+	defPipelineFlags.depthWrite = false;
 
 	dofHShader.Create("shaders/postprocess.vert.spv", "main", "shaders/dof.frag.spv", "main");
 	dofHShader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
@@ -4790,6 +4856,7 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::Create(TriClass & PostProcessTri, Gath
 	dofHShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, onScreenTextImage);
 	dofHShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 5, midScreenTextImage);
 	dofHShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 6, fontMap);
+	dofHSubmission.SetDefaultPipelineFlags(defPipelineFlags);
 	dofHSubmission.SetShader("default", dofHShader);
 
 	dofVShader.Create("shaders/postprocess.vert.spv", "main", "shaders/dof.frag.spv", "main");
@@ -4800,6 +4867,7 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::Create(TriClass & PostProcessTri, Gath
 	dofVShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, onScreenTextImage);
 	dofVShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 5, midScreenTextImage);
 	dofVShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 6, fontMap);
+	dofVSubmission.SetDefaultPipelineFlags(defPipelineFlags);
 	dofVSubmission.SetShader("default", dofVShader);
 }
 
@@ -4862,7 +4930,7 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::SetMidScreenMessage(bool mainPlayerOnL
 
 			curMidScreenTextType = CLIMB;
 			sprintf_s((char *)midScreenText, 90, midScrText.c_str());
-			midScreenTextImage.UploadData(midScreenText, 30 * 3);
+			midScreenTextImage.UploadData(midScreenText, 30 * 3, true);
 		}
 		midScreenAlphaTarget = 1.0f;
 	}
@@ -4877,7 +4945,7 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::SetMidScreenMessage(bool mainPlayerOnL
 		{
 			curMidScreenTextType = NONE;
 			memset(midScreenText, (int)(' '), 30 * 3);
-			midScreenTextImage.UploadData(midScreenText, 30 * 3);
+			midScreenTextImage.UploadData(midScreenText, 30 * 3, true);
 		}
 	}
 }

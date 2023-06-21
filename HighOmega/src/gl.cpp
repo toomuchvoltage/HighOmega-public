@@ -46,6 +46,7 @@ std::mutex HIGHOMEGA::GL::globalCompute_PSO_DSL_Cache_mutex;
 
 ThreadLocalCache <BufferClass *> HIGHOMEGA::GL::BufferClass::stagingBuffers;
 ThreadLocalCache <BufferClass *> HIGHOMEGA::GL::ImageClass::stagingBuffers;
+ThreadLocalCache <LibKTX2VDIWrapper> HIGHOMEGA::GL::ImageClass::ktx2VDIPools;
 ThreadLocalCache <VkCommandPool> HIGHOMEGA::GL::CommandBuffer::cmdPools;
 thread_local std::vector <VkSemaphore> HIGHOMEGA::GL::waitSemaphores;
 thread_local unsigned long long ThreadID = mersenneTwister64BitPRNG();
@@ -363,8 +364,6 @@ void InstanceClass::RemovePast()
 	acquireImageFence.RemovePast();
 	renderComplete.RemovePast();
 
-	if (haveKTXVDI) ktxVulkanDeviceInfo_Destruct(&ktxVDI);
-
 	CreateSwapChainRemovePast();
 
 	for (std::pair<const std::string, Raster_PSO_DSL> & curPSODSL : globalRaster_PSO_DSL_Cache)
@@ -383,7 +382,6 @@ void InstanceClass::RemovePast()
 	if (haveDevice) vkDestroyDevice(device, nullptr);
 	if (haveInstance) vkDestroyInstance(instance, nullptr);
 
-	haveKTXVDI = false;
 	haveSurface = false;
 	haveDevice = false;
 	haveInstance = false;
@@ -402,7 +400,6 @@ void InstanceClass::CreateSwapChainRemovePast()
 
 InstanceClass::InstanceClass()
 {
-	haveKTXVDI = false;
 	haveSurface = false;
 	haveDevice = false;
 	haveInstance = false;
@@ -835,14 +832,6 @@ void InstanceClass::Make(bool validationLayer, WindowClass &inpWindow, bool requ
 
 	try { CreateCommandPool(*this, true); }
 	catch (...) { CreateSwapChainRemovePast(); throw std::runtime_error("Could not create setup command buffer"); }
-
-	VkCommandPool cmdPool;
-	{std::unique_lock<std::mutex> lk(cmdPools.mtx); cmdPool = cmdPools.dir[ThreadID].elem; }
-
-	KTX_error_code ktxResult = ktxVulkanDeviceInfo_Construct(&ktxVDI, physicalDevice, device, submissionQueue, cmdPool, nullptr);
-	if (ktxResult != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Could not supply vulkan device info to libKTX"); }
-
-	haveKTXVDI = true;
 }
 
 void InstanceClass::CreateSwapChain(WindowClass &windowRef)
@@ -2839,7 +2828,7 @@ void HIGHOMEGA::GL::ImageClass::setImageLayout(VkCommandBuffer cmdbuffer, std::v
 		barriers[i].image = *(images[i]);
 		barriers[i].subresourceRange.aspectMask = aspectMask;
 		barriers[i].subresourceRange.baseMipLevel = baseMipLevel;
-		barriers[i].subresourceRange.levelCount = mipLevelCount;
+		barriers[i].subresourceRange.levelCount = (mipLevelCount == 0) ? VK_REMAINING_MIP_LEVELS : mipLevelCount;
 		barriers[i].subresourceRange.layerCount = numLayers;
 
 		switch (oldImageLayout)
@@ -3067,7 +3056,21 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 		throw std::runtime_error("We do not have a pointer to the Vulkan instance");
 	}
 
-	if (haveKTXVulkanTexture) ktxVulkanTexture_Destruct(&ktxVulkanTexture, cachedInstance->ktxVDI.device, nullptr);
+	if (haveKTXVulkanTexture)
+	{
+		if (ktx2VDIRef)
+		{
+			ktxVulkanTexture_Destruct(&ktxVulkanTexture, ktx2VDIRef->elem.ktxVDI.device, nullptr);
+			{std::unique_lock <std::mutex> lk(ktx2VDIPools.mtx);
+			ktx2VDIPools.dir[ktx2VDIRef->keyRef].elemCount--;
+			if (ktx2VDIPools.dir[ktx2VDIRef->keyRef].elemCount == 0)
+			{
+				ktx2VDIPools.dir[ktx2VDIRef->keyRef].elem.Destroy();
+				ktx2VDIPools.dir.erase(ktx2VDIRef->keyRef);
+			}}
+			ktx2VDIRef = nullptr;
+		}
+	}
 	if (haveImageView) vkDestroyImageView(cachedInstance->device, view, nullptr);
 	for (VkImageView & curView : layerView) {
 		vkDestroyImageView(cachedInstance->device, curView, nullptr);
@@ -3290,6 +3293,35 @@ void HIGHOMEGA::GL::ImageClass::CreateStandaloneImage(InstanceClass & ptrToInsta
 	}
 }
 
+void HIGHOMEGA::GL::LibKTX2VDIWrapper::Create(InstanceClass& ptrToInstance)
+{
+	cachedInstance = &ptrToInstance;
+	if (claims == 0u)
+	{
+		VkCommandPoolCreateInfo cmdPoolInfo = {};
+		cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		cmdPoolInfo.queueFamilyIndex = ptrToInstance.graphicsQueueNodeIndex;
+		cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+		VkResult result = vkCreateCommandPool(cachedInstance->device, &cmdPoolInfo, nullptr, &cmdPool);
+		if (result != VK_SUCCESS) { throw std::runtime_error("LibKTX2VDIWrapper: Could not create command pool"); }
+
+		KTX_error_code ktxResult = ktxVulkanDeviceInfo_Construct(&ktxVDI, cachedInstance->physicalDevice, cachedInstance->device, cachedInstance->submissionQueue, cmdPool, nullptr);
+		if (ktxResult != KTX_SUCCESS) { vkDestroyCommandPool(cachedInstance->device, cmdPool, nullptr); throw std::runtime_error("LibKTX2VDIWrapper: Could not supply vulkan device info to libKTX"); }
+
+	}
+	claims++;
+}
+
+void HIGHOMEGA::GL::LibKTX2VDIWrapper::Destroy()
+{
+	claims--;
+	if (claims == 0u)
+	{
+		ktxVulkanDeviceInfo_Destruct(&ktxVDI);
+		vkDestroyCommandPool(cachedInstance->device, cmdPool, nullptr);
+	}
+}
+
 void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrToInstance, unsigned char *data, unsigned int dataSize, PROVIDED_IMAGE_DATA_TYPE dataType, unsigned int inW, unsigned int inH, unsigned int inD, bool inIs3D, bool inIsArray, bool isCube, bool doMipMapping, FORMAT inpFormat)
 {
 	cachedInstance = &ptrToInstance;
@@ -3333,6 +3365,18 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 	}
 	else if (dataType == IMAGE_DATA_KTX)
 	{
+		ktx2VDIRef = nullptr;
+		{std::lock_guard <std::mutex> lk(ktx2VDIPools.mtx);
+		if (ktx2VDIPools.dir.find(ThreadID) == ktx2VDIPools.dir.end())
+		{
+			ktx2VDIPools.dir[ThreadID].elem.Create(Instance);
+			ktx2VDIPools.dir[ThreadID].elemCount = 1;
+			ktx2VDIPools.dir[ThreadID].keyRef = ThreadID;
+		}
+		else
+			ktx2VDIPools.dir[ThreadID].elemCount++;
+		ktx2VDIRef = &ktx2VDIPools.dir[ThreadID]; }
+
 		ktxTexture2* kTexture;
 		KTX_error_code result = ktxTexture_CreateFromMemory(data, dataSize, KTX_TEXTURE_CREATE_NO_FLAGS, (ktxTexture**)&kTexture);
 		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxTexture from ktx file"); }
@@ -3343,7 +3387,7 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 			if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error transcoding ktx file to BC3"); }
 		}
 		{std::unique_lock<std::mutex> lk(cachedInstance->queue_mutex);
-		result = ktxTexture_VkUploadEx((ktxTexture*)kTexture, &cachedInstance->ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		result = ktxTexture_VkUploadEx((ktxTexture*)kTexture, &ktx2VDIRef->elem.ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxVulkanTexture from ktx file"); }}
 		ktxTexture_Destroy((ktxTexture*)kTexture);
 
@@ -3620,7 +3664,7 @@ void HIGHOMEGA::GL::ImageClass::CopyImages(std::vector <ImageClass *> & copySour
 	catch (...) { throw std::runtime_error("Could not submit setup cmd buffer for image to image copy"); }
 }
 
-void HIGHOMEGA::GL::ImageClass::DownloadData()
+void HIGHOMEGA::GL::ImageClass::DownloadData(bool shaderReadAfterwards)
 {
 	if (cachedInstance == nullptr) throw std::runtime_error("We do not have a pointer to the Vulkan instance for image download");
 
@@ -3653,7 +3697,7 @@ void HIGHOMEGA::GL::ImageClass::DownloadData()
 
 		vkCmdCopyImageToBuffer(downloadCmdBuffer.cmdBuffers[0], image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, loadedDataBuffer->buffer, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
 
-		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
+		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, shaderReadAfterwards ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
 
 		try { downloadCmdBuffer.EndCommandBuffer(); }
 		catch (...) { throw std::runtime_error("Could not end setup cmd buffer for copy to buffer"); }
@@ -3687,7 +3731,7 @@ unsigned int HIGHOMEGA::GL::ImageClass::DownloadedDataSize()
 	return loadedDataBuffer->getSize();
 }
 
-void HIGHOMEGA::GL::ImageClass::UploadData(unsigned char* inData, unsigned int inDataSize)
+void HIGHOMEGA::GL::ImageClass::UploadData(unsigned char* inData, unsigned int inDataSize, bool shaderReadAfterwards)
 {
 	if (cachedInstance == nullptr) throw std::runtime_error("We do not have a pointer to the Vulkan instance for image upload");
 
@@ -3723,7 +3767,7 @@ void HIGHOMEGA::GL::ImageClass::UploadData(unsigned char* inData, unsigned int i
 
 		vkCmdCopyBufferToImage(uploadCmdBuffer.cmdBuffers[0], loadedDataBuffer->buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
 
-		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
+		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, shaderReadAfterwards ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
 
 		try { uploadCmdBuffer.EndCommandBuffer(); }
 		catch (...) { throw std::runtime_error("Could not end setup cmd buffer for copy to image"); }
@@ -4769,6 +4813,11 @@ void HIGHOMEGA::GL::DescriptorSets::RewriteDescriptorSets(std::vector<ShaderReso
 	WriteDescriptorSets(allResources);
 }
 
+void HIGHOMEGA::GL::DescriptorSets::SetDirty(bool isDirty)
+{
+	this->isDirty = isDirty;
+}
+
 void HIGHOMEGA::GL::DescriptorSets::UpdateDescriptorSets(std::vector<ShaderResource>& allResources)
 {
 	for (unsigned int curSet : ptrToDescSetLayout->allSets)
@@ -4902,6 +4951,11 @@ void HIGHOMEGA::GL::DescriptorSets::UpdateDescriptorSets(std::vector<ShaderResou
 		ptrToInstance->fpUpdateDescriptorSetWithTemplateKHR(ptrToInstance->device, descriptorSets[curSet], myDescriptorUpdateTemplate, descriptorUpdateTemplateData[curSet].data());
 		ptrToInstance->fpDestroyDescriptorUpdateTemplateKHR(ptrToInstance->device, myDescriptorUpdateTemplate, nullptr);
 	}
+}
+
+bool HIGHOMEGA::GL::DescriptorSets::GetDirty()
+{
+	return isDirty;
 }
 
 HIGHOMEGA::GL::DescriptorSets::~DescriptorSets()

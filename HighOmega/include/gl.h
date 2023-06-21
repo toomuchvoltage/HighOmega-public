@@ -443,6 +443,18 @@ namespace HIGHOMEGA
 			ImageClearColor(vec3 rgb, float alpha);
 			ImageClearColor(unsigned int r, unsigned int g, unsigned int b, unsigned int a);
 		};
+		class LibKTX2VDIWrapper
+		{
+		private:
+			unsigned int claims = 0u;
+			VkCommandPool cmdPool;
+			InstanceClass* cachedInstance;
+		public:
+			ktxVulkanDeviceInfo ktxVDI;
+
+			void Create(InstanceClass& ptrToInstance);
+			void Destroy();
+		};
 		class ImageClass : public CStyleWrapper
 		{
 			friend class SAURAY::SaurayClientInterfaceClass;
@@ -486,6 +498,7 @@ namespace HIGHOMEGA
 			friend class DescriptorSets;
 		private:
 			ThreadLocalCache <BufferClass *>::value *stagingBufferPtr = nullptr;
+			ThreadLocalCache <LibKTX2VDIWrapper>::value *ktx2VDIRef = nullptr;
 			BufferClass* loadedDataBuffer = nullptr;
 
 			InstanceClass *cachedInstance;
@@ -528,6 +541,7 @@ namespace HIGHOMEGA
 			void CreateTextureFromFileOrData(InstanceClass & ptrToInstance, unsigned char *data, unsigned int dataSize, PROVIDED_IMAGE_DATA_TYPE dataType, unsigned int inW, unsigned int inH, unsigned int inD, bool inIs3D, bool inIsArray, bool isCube, bool doMipMapping, FORMAT inpFormat);
 		public:
 			static ThreadLocalCache <BufferClass *> stagingBuffers;
+			static ThreadLocalCache <LibKTX2VDIWrapper> ktx2VDIPools;
 
 			ImageClass();
 			void RemovePast();
@@ -542,11 +556,11 @@ namespace HIGHOMEGA
 			bool CreateTexture(InstanceClass & ptrToInstance, unsigned int inW, unsigned int inH, unsigned char *inData, unsigned int inD = 1, bool inIs3D = false, bool inIsArray = false, bool isCube = false, bool doMipMapping = true, FORMAT inpFormat = R8G8B8A8UN);
 			static void ClearColors(std::vector <ImageClass *> & images, ImageClearColor clearColor);
 			static void CopyImages(std::vector <ImageClass *> & copySource, std::vector <ImageClass *> & copyTarget);
-			void DownloadData();
+			void DownloadData(bool shaderReadAfterwards = false);
 			void FreeLoadedData();
 			unsigned char * DownloadedData();
 			unsigned int DownloadedDataSize();
-			void UploadData(unsigned char* inData, unsigned int inDataSize);
+			void UploadData(unsigned char* inData, unsigned int inDataSize, bool shaderReadAfterwards = false);
 			vec2 textureAtlasCoords;
 			int getWidth();
 			int getHeight();
@@ -625,6 +639,7 @@ namespace HIGHOMEGA
 			friend class ShaderStage;
 			friend class CommandBuffer;
 			friend class Timestamp;
+			friend class LibKTX2VDIWrapper;
 		private:
 			InstanceClass(const InstanceClass &obj);
 			void operator=(const InstanceClass& b);
@@ -634,8 +649,6 @@ namespace HIGHOMEGA
 			static bool lowMemoryDevice;
 			bool supportsSparseResources;
 			unsigned long long vramAmount;
-
-			ktxVulkanDeviceInfo ktxVDI;
 
 			std::mutex queue_mutex;
 
@@ -683,7 +696,6 @@ namespace HIGHOMEGA
 			PFN_vkCmdBeginConditionalRenderingEXT fpCmdBeginConditionalRenderingEXT;
 			PFN_vkCmdEndConditionalRenderingEXT fpCmdEndConditionalRenderingEXT;
 
-			bool haveKTXVDI;
 			bool haveDevice;
 			bool haveInstance;
 			bool haveSurface;
@@ -887,6 +899,7 @@ namespace HIGHOMEGA
 			ThreadLocalCache <std::vector<VkDescriptorPool>>::value *descriptorPoolPtr = nullptr;
 			VkDescriptorPool poolObject;
 			bool writtenOnce = false;
+			bool isDirty = false;
 
 		public:
 
@@ -896,6 +909,8 @@ namespace HIGHOMEGA
 			{
 				Make(std::forward<Args>(args)...);
 			}
+			void SetDirty(bool isDirty);
+			bool GetDirty();
 			void WriteDescriptorSets(std::vector<ShaderResource>& allResources);
 			void RewriteDescriptorSets(std::vector<ShaderResource>& allResources);
 			void UpdateDescriptorSets(std::vector<ShaderResource>& allResources);
