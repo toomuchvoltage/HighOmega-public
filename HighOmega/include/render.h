@@ -456,7 +456,7 @@ namespace HIGHOMEGA
 
 		private:
 			bool recordedCmdBuf;
-			bool resourcesChanged;
+			bool allResourcesChanged;
 			bool cullingResourcesChanged;
 			unsigned int resourcesRequested;
 			bool redoSubmissionData;
@@ -866,6 +866,11 @@ namespace HIGHOMEGA
 				ShaderResourceSet rtShaderResourceSetGloss;
 				std::vector<ShaderResource> tracingResourcesGloss;
 				RTTracelet traceletGloss;
+				struct InfluenceStruct
+				{
+					float factor;
+				} influence;
+				BufferClass influenceBuf;
 
 			public:
 				struct
