@@ -1,4 +1,4 @@
-# SauRay<sup>TM</sup> for CS:GO (via IPC through SourceMod)
+# SauRay<sup>TM</sup> for TF2 (via IPC through SourceMod)
 
 This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](http://sauray.tech) for [our TF2 SourceMod plugin](https://github.com/toomuchvoltage/SauRay/tree/master/TF2). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
 
