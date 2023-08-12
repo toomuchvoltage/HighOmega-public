@@ -23,8 +23,6 @@
  * alternative is duplicating unattractively large parts of it.
  *
  * @author Mark Callow, Edgewise Consulting
- *
- * $Date$
  */
 
 #include <ktx.h>
@@ -54,7 +52,53 @@ extern "C" {
 #endif
 
 /**
+ * @struct ktxVulkanFunctions
+ * @~English
+ * @brief Struct for applications to pass Vulkan function pointers to the
+ *        ktxTexture_VkUpload functions via a ktxVulkanDeviceInfo struct.
+ *
+ * @c vkGetInstanceProcAddr and @c vkGetDeviceProcAddr should be set, others
+ * are optional.
+ */
+typedef struct ktxVulkanFunctions {
+    // These are functions pointers we need to perform our vulkan duties.
+    PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
+    PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr;
+
+    // These we optionally specify
+    PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers;
+    PFN_vkAllocateMemory vkAllocateMemory;
+    PFN_vkBeginCommandBuffer vkBeginCommandBuffer;
+    PFN_vkBindBufferMemory vkBindBufferMemory;
+    PFN_vkBindImageMemory vkBindImageMemory;
+    PFN_vkCmdBlitImage vkCmdBlitImage;
+    PFN_vkCmdCopyBufferToImage vkCmdCopyBufferToImage;
+    PFN_vkCmdPipelineBarrier vkCmdPipelineBarrier;
+    PFN_vkCreateImage vkCreateImage;
+    PFN_vkDestroyImage vkDestroyImage;
+    PFN_vkCreateBuffer vkCreateBuffer;
+    PFN_vkDestroyBuffer vkDestroyBuffer;
+    PFN_vkCreateFence vkCreateFence;
+    PFN_vkDestroyFence vkDestroyFence;
+    PFN_vkEndCommandBuffer vkEndCommandBuffer;
+    PFN_vkFreeCommandBuffers vkFreeCommandBuffers;
+    PFN_vkFreeMemory vkFreeMemory;
+    PFN_vkGetBufferMemoryRequirements vkGetBufferMemoryRequirements;
+    PFN_vkGetImageMemoryRequirements vkGetImageMemoryRequirements;
+    PFN_vkGetImageSubresourceLayout vkGetImageSubresourceLayout;
+    PFN_vkGetPhysicalDeviceImageFormatProperties vkGetPhysicalDeviceImageFormatProperties;
+    PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties;
+    PFN_vkGetPhysicalDeviceMemoryProperties vkGetPhysicalDeviceMemoryProperties;
+    PFN_vkMapMemory vkMapMemory;
+    PFN_vkQueueSubmit vkQueueSubmit;
+    PFN_vkQueueWaitIdle vkQueueWaitIdle;
+    PFN_vkUnmapMemory vkUnmapMemory;
+    PFN_vkWaitForFences vkWaitForFences;
+} ktxVulkanFunctions;
+
+/**
  * @class ktxVulkanTexture
+ * @~English
  * @brief Struct for returning information about the Vulkan texture image
  *        created by the ktxTexture_VkUpload* functions.
  *
@@ -62,6 +106,9 @@ extern "C" {
  */
 typedef struct ktxVulkanTexture
 {
+    PFN_vkDestroyImage vkDestroyImage; /*!< Pointer to vkDestroyImage function */
+    PFN_vkFreeMemory vkFreeMemory; /*!< Pointer to vkFreeMemory function */
+
     VkImage image; /*!< Handle to the Vulkan image created by the loader. */
     VkFormat imageFormat;     /*!< Format of the image data. */
     VkImageLayout imageLayout; /*!< Layout of the created image. Has the same
@@ -77,14 +124,23 @@ typedef struct ktxVulkanTexture
     uint32_t depth; /*!< The depth of the image. */
     uint32_t levelCount; /*!< The number of MIP levels in the image. */
     uint32_t layerCount; /*!< The number of array layers in the image. */
+    unsigned long long devMemoryOffset;
+    unsigned long long allocationId;
 } ktxVulkanTexture;
 
 KTX_API void KTX_APIENTRY
 ktxVulkanTexture_Destruct(ktxVulkanTexture* This, VkDevice device,
                           const VkAllocationCallbacks* pAllocator);
 
+KTX_API void KTX_APIENTRY
+ktxVulkanTexture_DestructWithSuballocator(ktxVulkanTexture* This, VkDevice device,
+                                          const VkAllocationCallbacks* pAllocator,
+                                          void (*freeMemFuncPtr)(unsigned long long allocId));
+
+
 /**
  * @class ktxVulkanDeviceInfo
+ * @~English
  * @brief Struct for passing information about the Vulkan device on which
  *        to create images to the texture image loading functions.
  *
@@ -108,6 +164,7 @@ ktxVulkanTexture_Destruct(ktxVulkanTexture* This, VkDevice device,
  * @endcode
  */
 typedef struct ktxVulkanDeviceInfo {
+    VkInstance instance; /*!< Instance used to communicate with vulkan. */
     VkPhysicalDevice physicalDevice; /*!< Handle of the physical device. */
     VkDevice device; /*!< Handle of the logical device. */
     VkQueue queue; /*!< Handle to the queue to which to submit commands. */
@@ -120,17 +177,37 @@ typedef struct ktxVulkanDeviceInfo {
     const VkAllocationCallbacks* pAllocator;
     /** Memory properties of the Vulkan physical device. */
     VkPhysicalDeviceMemoryProperties deviceMemoryProperties;
+
+    /** The functions needed to operate functions */
+    ktxVulkanFunctions vkFuncs;
 } ktxVulkanDeviceInfo;
+
+
+KTX_API ktxVulkanDeviceInfo* KTX_APIENTRY
+ktxVulkanDeviceInfo_CreateEx(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
+                           VkQueue queue, VkCommandPool cmdPool,
+                           const VkAllocationCallbacks* pAllocator,
+                           const ktxVulkanFunctions* pFunctions);
 
 KTX_API ktxVulkanDeviceInfo* KTX_APIENTRY
 ktxVulkanDeviceInfo_Create(VkPhysicalDevice physicalDevice, VkDevice device,
                            VkQueue queue, VkCommandPool cmdPool,
                            const VkAllocationCallbacks* pAllocator);
+
 KTX_API KTX_error_code KTX_APIENTRY
 ktxVulkanDeviceInfo_Construct(ktxVulkanDeviceInfo* This,
                          VkPhysicalDevice physicalDevice, VkDevice device,
                          VkQueue queue, VkCommandPool cmdPool,
                          const VkAllocationCallbacks* pAllocator);
+
+KTX_API KTX_error_code KTX_APIENTRY
+ktxVulkanDeviceInfo_ConstructEx(ktxVulkanDeviceInfo* This,
+                              VkInstance instance,
+                              VkPhysicalDevice physicalDevice, VkDevice device,
+                              VkQueue queue, VkCommandPool cmdPool,
+                              const VkAllocationCallbacks* pAllocator,
+                              const ktxVulkanFunctions* pFunctions);
+
 KTX_API void KTX_APIENTRY
 ktxVulkanDeviceInfo_Destruct(ktxVulkanDeviceInfo* This);
 KTX_API void KTX_APIENTRY
@@ -141,6 +218,15 @@ ktxTexture_VkUploadEx(ktxTexture* This, ktxVulkanDeviceInfo* vdi,
                       VkImageTiling tiling,
                       VkImageUsageFlags usageFlags,
                       VkImageLayout finalLayout);
+KTX_API KTX_error_code KTX_APIENTRY
+ktxTexture_VkUploadExWithSuballocator(ktxTexture* This, ktxVulkanDeviceInfo* vdi,
+                      ktxVulkanTexture* vkTexture,
+                      VkImageTiling tiling,
+                      VkImageUsageFlags usageFlags,
+                      VkImageLayout finalLayout,
+                      unsigned long long (*allocMemFuncPtr)(VkMemoryAllocateInfo* allocInfo, VkMemoryRequirements* memReq, VkDeviceMemory* devMemory, unsigned long long* devMemoryOffset),
+                      void (*freeMemFuncPtr)(unsigned long long allocId));
+
 KTX_API KTX_error_code KTX_APIENTRY
 ktxTexture_VkUpload(ktxTexture* texture, ktxVulkanDeviceInfo* vdi,
                     ktxVulkanTexture *vkTexture);

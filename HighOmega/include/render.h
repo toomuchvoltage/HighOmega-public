@@ -115,6 +115,9 @@ namespace HIGHOMEGA
 
 		class MeshMaterial
 		{
+		private:
+			CacheItem<ImageClass>* TryDifferentLODs(std::string& belong, std::string& texName, InstanceClass& ptrToInstance, bool isArray = false, int nLayers = 1, bool mipmap = true, bool useSRGB = false, bool loadLowRes = false);
+
 		public:
 			float emissivity;
 			float refractiveIndex;
@@ -142,7 +145,7 @@ namespace HIGHOMEGA
 			void BumpClaims();
 			void ReduceClaims();
 			MeshMaterial();
-			MeshMaterial(HIGHOMEGA::MESH::DataBlock & propBlock, std::string belong, InstanceClass & ptrToInstance);
+			MeshMaterial(HIGHOMEGA::MESH::DataBlock & propBlock, std::string belong, InstanceClass & ptrToInstance, bool loadLowRes = false);
 		};
 		class MeshMaterialHash
 		{
@@ -256,7 +259,7 @@ namespace HIGHOMEGA
 			void Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction = [](int, DataGroup & inpGroup) -> bool {
 				float tmpFloat;
 				return !Mesh::getDataRowFloat(inpGroup, "PROPS", "cloth", tmpFloat);
-			}, mat4 *inpTransform = nullptr, bool gpuResideOnly = true, bool inpImmutable = true, bool loadAnimationData = false);
+			}, mat4 *inpTransform = nullptr, bool gpuResideOnly = true, bool inpImmutable = true, bool loadAnimationData = false, bool loadLowRes = false);
 			~GraphicsModel();
 			GeometryClass *getGeometryById(std::string & groupId);
 			MeshMaterial getMaterialById(std::string & groupId);

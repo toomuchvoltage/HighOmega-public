@@ -53,11 +53,6 @@ namespace HIGHOMEGA
 			FILE_NOT_FOUND,
 			FILE_EMPTY
 		};
-		enum LOAD_CHOSEN_ASSET
-		{
-			FILE = 0,
-			IMG_KTX
-		};
 		enum LOAD_LOCATION
 		{
 			ORIGINAL = 0,
@@ -71,8 +66,8 @@ namespace HIGHOMEGA
 		};
 		static std::string GetFileName(std::string filePath);
 		static FILE_LOAD_RESULT LoadFile(std::string fileName, unsigned char ** content, unsigned int & size);
-		static bool FindAsset(std::string belong, std::string fileName, std::string & finalPath, LOAD_LOCATION & loadLocation, LOAD_CHOSEN_ASSET & loadChosenAsset, bool searchingCommonFolder = false);
-		static RESOURCE_LOAD_RESULT Load(std::string belong, std::string fileName, unsigned char **content, unsigned int & size, LOAD_LOCATION & loadLocation, LOAD_CHOSEN_ASSET & loadChosenAsset);
+		static bool FindAsset(std::string belong, std::string fileName, std::string & finalPath, LOAD_LOCATION & loadLocation, bool searchingCommonFolder = false);
+		static RESOURCE_LOAD_RESULT Load(std::string belong, std::string fileName, unsigned char **content, unsigned int & size, LOAD_LOCATION & loadLocation);
 		static bool DirectoryExists(std::string dirName);
 		enum TGA_PARSE_RESULT
 		{

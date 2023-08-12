@@ -225,7 +225,45 @@ HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial()
 {
 }
 
-HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propBlock, std::string belong, InstanceClass & ptrToInstance)
+CacheItem<ImageClass>* HIGHOMEGA::RENDER::MeshMaterial::TryDifferentLODs(std::string& belong, std::string& texName, InstanceClass& ptrToInstance, bool isArray, int nLayers, bool mipmap, bool useSRGB, bool loadLowRes)
+{
+	std::string textureName = texName;
+
+	textureName.replace(textureName.rfind(".tga"), std::string(".tga").length(), ".ktx");
+	std::string preExtension = ".ktx";
+	if (loadLowRes)
+	{
+		textureName.replace(textureName.rfind(".ktx"), std::string(".ktx").length(), ".lowq.ktx");
+		preExtension = ".lowq.ktx";
+	}
+
+	CacheItem<ImageClass>* texRef = AddOrFindCachedTexture(belong, textureName, ptrToInstance, isArray, nLayers, mipmap, useSRGB);
+	if (!texRef)
+	{
+		if (loadLowRes)
+		{
+			textureName = texName;
+			textureName.replace(textureName.rfind(".tga"), std::string(".tga").length(), ".ktx");
+			preExtension = ".ktx";
+		}
+		else
+		{
+			textureName = texName;
+			preExtension = ".tga";
+		}
+		texRef = AddOrFindCachedTexture(belong, textureName, ptrToInstance, isArray, nLayers, mipmap, useSRGB);
+		if (!texRef)
+		{
+			if (!loadLowRes) return nullptr;
+			texRef = AddOrFindCachedTexture(belong, texName, ptrToInstance, isArray, nLayers, mipmap, useSRGB);
+			if (!texRef) return nullptr;
+		}
+	}
+	
+	return texRef;
+}
+
+HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propBlock, std::string belong, InstanceClass & ptrToInstance, bool loadLowRes)
 {
 	if (!Mesh::getDataRowString(propBlock, "texname", diffName)) throw std::runtime_error("Bad diffName fetch for graphics model load");
 
@@ -235,27 +273,27 @@ HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propB
 	mipmap = true;
 	if (diffName.find("{nomip}") != std::string::npos) mipmap = false;
 
-	diffRef = AddOrFindCachedTexture(belong, diffName, ptrToInstance, true, isTerrain ? 4 : 1, mipmap, true);
+	diffRef = TryDifferentLODs(belong, diffName, ptrToInstance, true, isTerrain ? 4 : 1, mipmap, true, loadLowRes);
 	if (!diffRef) throw std::runtime_error("Could not find albedo map");
 
 	nrmName = diffName;
 	nrmName.replace(nrmName.rfind(".tga"), std::string(".tga").length(), ".nrm.tga");
-	nrmRef = AddOrFindCachedTexture(belong, nrmName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap);
+	nrmRef = TryDifferentLODs(belong, nrmName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, false, loadLowRes);
 	if (!nrmRef) nrmName = "";
 
 	rghName = diffName;
 	rghName.replace(rghName.rfind(".tga"), std::string(".tga").length(), ".rgh.tga");
-	rghRef = AddOrFindCachedTexture(belong, rghName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap);
+	rghRef = TryDifferentLODs(belong, rghName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, false, loadLowRes);
 	if (!rghRef) rghName = "";
 
 	hgtName = diffName;
 	hgtName.replace(hgtName.rfind(".tga"), std::string(".tga").length(), ".hgt.tga");
-	hgtRef = AddOrFindCachedTexture(belong, hgtName, ptrToInstance, true, isTerrain ? 4 : 1, mipmap); // Height map needs this again because the albedo map stencils are not accessible
+	hgtRef = TryDifferentLODs(belong, hgtName, ptrToInstance, true, isTerrain ? 4 : 1, mipmap, false, loadLowRes); // Height map needs this again because the albedo map stencils are not accessible
 	if (!hgtRef) hgtName = "";
 
 	spcName = diffName;
 	spcName.replace(spcName.rfind(".tga"), std::string(".tga").length(), ".spc.tga");
-	spcRef = AddOrFindCachedTexture(belong, spcName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, true);
+	spcRef = TryDifferentLODs(belong, spcName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, true, loadLowRes);
 	if (!spcRef) spcName = "";
 
 	if (!Mesh::getDataRowFloat(propBlock, "emissivity", emissivity)) emissivity = 0.0f;
@@ -550,8 +588,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderIte
 			unsigned char* cacheContent = nullptr;
 			unsigned int cacheSize = 0;
 			ResourceLoader::LOAD_LOCATION loadLocation;
-			ResourceLoader::LOAD_CHOSEN_ASSET chosenAsset;
-			if (cacheNames.size() > 0 && ResourceLoader::Load("", cacheNames[i], &cacheContent, cacheSize, loadLocation, chosenAsset) == ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS)
+			if (cacheNames.size() > 0 && ResourceLoader::Load("", cacheNames[i], &cacheContent, cacheSize, loadLocation) == ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS)
 			{
 				curPair.item->sdf->UploadData(cacheContent, cacheSize);
 				curPair.item->sdf->FreeLoadedData();
@@ -660,7 +697,6 @@ void HIGHOMEGA::RENDER::GraphicsModel::RemovePast()
 {
 	allNEEHintData.clear();
 	vertexCache.clear();
-	MaterialGeomMap.clear();
 	armatures.clear();
 
 	modelTransMat.Ident();
@@ -670,6 +706,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::RemovePast()
 		MeshMaterial curMat = it->first;
 		curMat.ReduceClaims();
 	}
+	MaterialGeomMap.clear();
 	if (sdf) delete sdf;
 	sdf = nullptr;
 
@@ -718,7 +755,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(std::string & newGroupId, MeshMater
 	isInit = true;
 }
 
-void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction, mat4 *inpTransform, bool gpuResideOnly, bool inpImmutable, bool loadAnimationData)
+void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction, mat4 *inpTransform, bool gpuResideOnly, bool inpImmutable, bool loadAnimationData, bool loadLowRes)
 {
 	if (isInit) RemovePast();
 
@@ -822,7 +859,8 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, st
 
 		HIGHOMEGA::MESH::DataBlock *propsBlock = nullptr;
 		if (!Mesh::getDataBlock(curPolyGroup, "PROPS", &propsBlock)) continue;
-		MeshMaterial mat(*propsBlock, belong, ptrToInstance);
+
+		MeshMaterial mat(*propsBlock, belong, ptrToInstance, loadLowRes);
 		MaterialGeomMap[mat].emplace_back ();
 		GeometryClass *curGeom = &MaterialGeomMap[mat].back();
 

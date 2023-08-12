@@ -340,9 +340,20 @@ namespace HIGHOMEGA
 		class ZoneStreamingClass
 		{
 		private:
+			struct zoneDesc
+			{
+				std::string name;
+				bool lowRes;
+				bool operator==(const zoneDesc& other) const;
+			};
+			class ZoneDescHash
+			{
+			public:
+				std::size_t operator()(const zoneDesc& k) const;
+			};
 			bool zoneStreamingActivated = false;
 			std::unordered_map<std::string, std::vector<std::string>> zoneReferences;
-			std::vector<std::string> foundZonesCached;
+			std::vector<zoneDesc> foundZonesCached;
 			std::vector<RigidBody *> rigidBodiesToAdd;
 			bool lastZonesSaved = false;
 			void getTileNums(vec3 inpPos, int & tileX, int & tileY, int & tileZ);
@@ -366,6 +377,7 @@ namespace HIGHOMEGA
 			{
 				GraphicsModel *graphicsModel = nullptr;
 				RigidBody *rigidBody = nullptr;
+				bool loadedLowResModel = false;
 				unsigned long long itemId = 0ull;
 				unsigned long long plasteredId = 0ull;
 				unsigned long long particlesId = 0ull;
@@ -380,11 +392,12 @@ namespace HIGHOMEGA
 			std::string zoneLocation = "";
 			std::vector<GroupedRenderSubmission*> submissionList;
 			std::function<SubmittedRenderItem(GroupedRenderSubmission*, GraphicsModel*)> perSubmissionCall;
-			std::unordered_map <std::string, zone> loadedZones;
+			std::unordered_map <zoneDesc, zone, ZoneDescHash> loadedZones;
 
 			int tilesPerDrawRegionEdge();
 			float unitsPerTileEdge();
 			bool allZonesProduced();
+			bool noZonesProduced();
 			bool isZoneStreamingActivated();
 			void setAllZonesNotProduced();
 			void waitOnZoneProduction();
