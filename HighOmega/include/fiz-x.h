@@ -202,7 +202,7 @@ namespace HIGHOMEGA
 			RigidBody(std::string & newGroupId, DataBlock &propBlock, std::vector <TriUV> & triList, vec3 inpNewCenter);
 			RigidBody(Mesh &inpMesh, std::string belong, mat4 inpOrient, vec3 inpPos, bool inIsMap = false, std::function<bool(int, DataGroup & )> inpFilterFunction = [](int, DataGroup & inpGroup) -> bool {
 				return true;
-			}, vec3 *inpNewCenter = nullptr);
+			}, vec3 *inpNewCenter = nullptr, bool loadLowRes = false);
 			void ApplyForce(vec3 force, vec3 point, float delta_t);
 			void ApplyImpulse(vec3 impulse, vec3 point);
 			void Move(float delta_t);

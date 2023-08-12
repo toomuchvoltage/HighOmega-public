@@ -85,6 +85,7 @@ namespace HIGHOMEGA
 				DEV_ADDRESS
 			};
 			std::vector<std::pair<MemChunk *, SubAlloc>> AllocMem(VkDevice & inpDev, VkMemoryAllocateInfo & allocInfo, VkMemoryRequirements & memReq, MEMORY_MAP_TYPE memoryMapType, bool useSparseResources);
+			unsigned long long ReportMemoryHoles();
 			void LogMemUsageStats();
 			void FreeMem(std::vector<std::pair<MemChunk *, SubAlloc>>& pages, VkDevice& inpDev);
 		}

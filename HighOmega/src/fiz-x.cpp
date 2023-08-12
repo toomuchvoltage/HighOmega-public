@@ -190,7 +190,7 @@ HIGHOMEGA::FIZ_X::RigidBody::RigidBody(std::string & newGroupId, DataBlock &prop
 	Frozen = false;
 }
 
-HIGHOMEGA::FIZ_X::RigidBody::RigidBody(Mesh & inpMesh, std::string belong , mat4 inpOrient, vec3 inpPos, bool inIsMap, std::function<bool(int, DataGroup &)> inpFilterFunction, vec3 *inpNewCenter) : meshRef(&inpMesh)
+HIGHOMEGA::FIZ_X::RigidBody::RigidBody(Mesh & inpMesh, std::string belong , mat4 inpOrient, vec3 inpPos, bool inIsMap, std::function<bool(int, DataGroup &)> inpFilterFunction, vec3 *inpNewCenter, bool loadLowRes) : meshRef(&inpMesh)
 {
 	isMap = inIsMap;
 

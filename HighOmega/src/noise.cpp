@@ -274,8 +274,7 @@ HIGHOMEGA::MATH::NOISE::NoiseGenerator::NoiseGenerator(Noise & redNoise, Noise &
 
 	unsigned int loadedDataSize;
 	ResourceLoader::LOAD_LOCATION loadLocation;
-	ResourceLoader::LOAD_CHOSEN_ASSET loadChosenAsset;
-	if (ResourceLoader::Load("", noiseName, &vals, loadedDataSize, loadLocation, loadChosenAsset) == ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS)
+	if (ResourceLoader::Load("", noiseName, &vals, loadedDataSize, loadLocation) == ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS)
 	{
 		if (loadedDataSize != (width * height * depth) * 4)
 		{

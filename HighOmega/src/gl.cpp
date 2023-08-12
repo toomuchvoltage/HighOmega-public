@@ -194,6 +194,54 @@ std::vector<std::pair<MemChunk *, SubAlloc>> HIGHOMEGA::GL::MEMORY_MANAGER::Allo
 		return { std::make_pair(&addedChunkRef, newSubAlloc) };
 }
 
+unsigned long long HIGHOMEGA::GL::MEMORY_MANAGER::ReportMemoryHoles()
+{
+	unsigned long long retVal = 0ull;
+	for (std::pair<const int, std::list<MemChunk>>& curList : ImageMemoryMap)
+		for (MemChunk& curChunk : curList.second)
+		{
+			std::list<SubAlloc>::iterator it = curChunk.allocs.begin();
+			if (curChunk.allocs.size() > 1)
+				while (true)
+				{
+					SubAlloc& curSubAlloc = *it;
+					it++;
+					SubAlloc& nextSubAlloc = *it;
+					retVal += (nextSubAlloc.offset - (curSubAlloc.offset + curSubAlloc.len));
+					if (nextSubAlloc == curChunk.allocs.back()) break;
+				}
+		}
+	for (std::pair<const int, std::list<MemChunk>>& curList : BufferMemoryMap)
+		for (MemChunk& curChunk : curList.second)
+		{
+			std::list<SubAlloc>::iterator it = curChunk.allocs.begin();
+			if (curChunk.allocs.size() > 1)
+				while (true)
+				{
+					SubAlloc& curSubAlloc = *it;
+					it++;
+					SubAlloc& nextSubAlloc = *it;
+					retVal += (nextSubAlloc.offset - (curSubAlloc.offset + curSubAlloc.len));
+					if (nextSubAlloc == curChunk.allocs.back()) break;
+				}
+		}
+	for (std::pair<const int, std::list<MemChunk>>& curList : RTMemoryMap)
+		for (MemChunk& curChunk : curList.second)
+		{
+			std::list<SubAlloc>::iterator it = curChunk.allocs.begin();
+			if (curChunk.allocs.size() > 1)
+				while (true)
+				{
+					SubAlloc& curSubAlloc = *it;
+					it++;
+					SubAlloc& nextSubAlloc = *it;
+					retVal += (nextSubAlloc.offset - (curSubAlloc.offset + curSubAlloc.len));
+					if (nextSubAlloc == curChunk.allocs.back()) break;
+				}
+		}
+	return retVal;
+}
+
 void HIGHOMEGA::GL::MEMORY_MANAGER::LogMemUsageStats()
 {
 	std::lock_guard <std::mutex> lk(mem_manager_mutex);
@@ -219,6 +267,7 @@ void HIGHOMEGA::GL::MEMORY_MANAGER::LogMemUsageStats()
 		for (MemChunk & curChunk : curPair.second)
 			LOG() << "Chunk usage: " << curChunk.used;
 	}
+	LOG() << "Total memory holes (in bytes) due to fragmentation: " << ReportMemoryHoles();
 }
 
 void HIGHOMEGA::GL::MEMORY_MANAGER::FreeMem(std::vector<std::pair<MemChunk *, SubAlloc>>& pages, VkDevice & inpDev)
@@ -234,6 +283,33 @@ void HIGHOMEGA::GL::MEMORY_MANAGER::FreeMem(std::vector<std::pair<MemChunk *, Su
 		}
 	}
 	pages.clear();
+}
+
+namespace HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2
+{
+	std::unordered_map<unsigned long long, std::vector<std::pair<MemChunk*, SubAlloc>>> AllocMemCWrapperDirectory;
+	VkDevice* deviceCached = nullptr;
+	unsigned long long AllocMemCWrapper(VkMemoryAllocateInfo* allocInfo, VkMemoryRequirements* memReq, VkDeviceMemory* devMemory, unsigned long long* devMemoryOffset)
+	{
+		unsigned long long allocId = mersenneTwister64BitPRNG();
+		try
+		{
+			AllocMemCWrapperDirectory[allocId] = AllocMem(*deviceCached, *allocInfo, *memReq, MEMORY_MAP_TYPE::IMAGE, false);
+			*devMemory = AllocMemCWrapperDirectory[allocId].begin()->first->mem;
+			*devMemoryOffset = AllocMemCWrapperDirectory[allocId].begin()->second.offset;
+			return allocId;
+		}
+		catch (...)
+		{
+			return 0ull;
+		}
+	}
+
+	void FreeMemCWrapper(unsigned long long allocId)
+	{
+		FreeMem(AllocMemCWrapperDirectory[allocId], *deviceCached);
+		AllocMemCWrapperDirectory.erase(allocId);
+	}
 }
 
 bool RTInstance::rtEnabled = false;
@@ -3060,7 +3136,8 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 	{
 		if (ktx2VDIRef)
 		{
-			ktxVulkanTexture_Destruct(&ktxVulkanTexture, ktx2VDIRef->elem.ktxVDI.device, nullptr);
+			HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::deviceCached = &ktx2VDIRef->elem.ktxVDI.device;
+			ktxVulkanTexture_DestructWithSuballocator(&ktxVulkanTexture, ktx2VDIRef->elem.ktxVDI.device, nullptr, HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::FreeMemCWrapper);
 			{std::unique_lock <std::mutex> lk(ktx2VDIPools.mtx);
 			ktx2VDIPools.dir[ktx2VDIRef->keyRef].elemCount--;
 			if (ktx2VDIPools.dir[ktx2VDIRef->keyRef].elemCount == 0)
@@ -3202,12 +3279,8 @@ bool HIGHOMEGA::GL::ImageClass::CreateTexture(InstanceClass & ptrToInstance, std
 	unsigned char *content = nullptr;
 	unsigned int contentSize;
 	HIGHOMEGA::ResourceLoader::LOAD_LOCATION loadLocation;
-	HIGHOMEGA::ResourceLoader::LOAD_CHOSEN_ASSET loadChosenAsset;
-	if (HIGHOMEGA::ResourceLoader::Load(belong, fileName, &content, contentSize, loadLocation, loadChosenAsset) != HIGHOMEGA::ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS) return false;
-	if (loadChosenAsset == HIGHOMEGA::ResourceLoader::LOAD_CHOSEN_ASSET::IMG_KTX)
-		CreateTextureFromFileOrData(ptrToInstance, content, contentSize, IMAGE_DATA_KTX, 0, 0, inD, inIs3D, inIsArray, isCube, doMipMapping, inpFormat);
-	else
-		CreateTextureFromFileOrData(ptrToInstance, content, contentSize, IMAGE_DATA_TGA, 0, 0, inD, inIs3D, inIsArray, isCube, doMipMapping, inpFormat);
+	if (HIGHOMEGA::ResourceLoader::Load(belong, fileName, &content, contentSize, loadLocation) != HIGHOMEGA::ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS) return false;
+	CreateTextureFromFileOrData(ptrToInstance, content, contentSize, fileName.find(".tga") != std::string::npos ? IMAGE_DATA_TGA : IMAGE_DATA_KTX, 0, 0, inD, inIs3D, inIsArray, isCube, doMipMapping, inpFormat);
 	delete[] content;
 	return true;
 }
@@ -3369,7 +3442,7 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 		{std::lock_guard <std::mutex> lk(ktx2VDIPools.mtx);
 		if (ktx2VDIPools.dir.find(ThreadID) == ktx2VDIPools.dir.end())
 		{
-			ktx2VDIPools.dir[ThreadID].elem.Create(Instance);
+			ktx2VDIPools.dir[ThreadID].elem.Create(*cachedInstance);
 			ktx2VDIPools.dir[ThreadID].elemCount = 1;
 			ktx2VDIPools.dir[ThreadID].keyRef = ThreadID;
 		}
@@ -3386,8 +3459,9 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 			result = ktxTexture2_TranscodeBasis(kTexture, KTX_TTF_BC3_RGBA, 0);
 			if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error transcoding ktx file to BC3"); }
 		}
+		HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::deviceCached = &ktx2VDIRef->elem.ktxVDI.device;
 		{std::unique_lock<std::mutex> lk(cachedInstance->queue_mutex);
-		result = ktxTexture_VkUploadEx((ktxTexture*)kTexture, &ktx2VDIRef->elem.ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		result = ktxTexture_VkUploadExWithSuballocator((ktxTexture*)kTexture, &ktx2VDIRef->elem.ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::AllocMemCWrapper, HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::FreeMemCWrapper);
 		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxVulkanTexture from ktx file"); }}
 		ktxTexture_Destroy((ktxTexture*)kTexture);
 

@@ -121,8 +121,7 @@ HIGHOMEGA::AUDIO::SoundBite::SoundBite(std::string fileName, float x, float y, f
 	unsigned char *fileContent = nullptr;
 	unsigned int contentSize;
 	ResourceLoader::LOAD_LOCATION loadLocation;
-	ResourceLoader::LOAD_CHOSEN_ASSET loadChosenAsset;
-	if (ResourceLoader::Load("", fileName, &fileContent, contentSize, loadLocation, loadChosenAsset) == ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS)
+	if (ResourceLoader::Load("", fileName, &fileContent, contentSize, loadLocation) == ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS)
 	{
 		ResourceLoader::WAVLoad(fileContent, numChannels, numBits, (void **)&data, (unsigned int &)size, (unsigned int &)freq);
 		delete[] fileContent;
