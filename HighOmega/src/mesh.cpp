@@ -488,8 +488,7 @@ HIGHOMEGA::MESH::Mesh::Mesh(std::string inpPath, std::string *prependMeshGroup)
 
 	offset = 0;
 	HIGHOMEGA::ResourceLoader::LOAD_LOCATION loadLocation;
-	HIGHOMEGA::ResourceLoader::LOAD_CHOSEN_ASSET loadChosenAsset;
-	if ( HIGHOMEGA::ResourceLoader::Load("", path, &content, content_size, loadLocation, loadChosenAsset) != HIGHOMEGA::ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS )
+	if ( HIGHOMEGA::ResourceLoader::Load("", path, &content, content_size, loadLocation) != HIGHOMEGA::ResourceLoader::RESOURCE_LOAD_RESULT::RESOURCE_LOAD_SUCCESS )
 		throw std::runtime_error("Could not load mesh file");
 
 	std::vector<char> cStringVector;

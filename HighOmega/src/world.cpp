@@ -539,6 +539,16 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::getTileNums(vec3 inpPos, int & tileX,
 	tileZ = (int)floor (inpPos.z);
 }
 
+bool HIGHOMEGA::WORLD::ZoneStreamingClass::zoneDesc::operator==(const zoneDesc& other) const
+{
+	return this->lowRes == other.lowRes && this->name == other.name;
+}
+
+std::size_t HIGHOMEGA::WORLD::ZoneStreamingClass::ZoneDescHash::operator()(const zoneDesc& k) const
+{
+	return std::hash<std::string>{}(k.name + std::to_string(k.lowRes));
+}
+
 void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zoneStreamingPtr, unsigned int threadId)
 {
 	try {
@@ -548,16 +558,18 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 		for (unsigned int i = 0; i != zoneStreamingPtr->foundZonesCached.size(); i++)
 		{
 			if (i % HIGHOMEGA_ZONE_STREAMING_THREAD_COUNT != threadId) continue;
-			std::string& foundZone = zoneStreamingPtr->foundZonesCached[i];
+			zoneDesc& foundZone = zoneStreamingPtr->foundZonesCached[i];
 			bool foundZoneLoaded;
 			{std::unique_lock<std::mutex> lk(zoneStreamingPtr->zone_producer_mutex);
 			foundZoneLoaded = (zoneStreamingPtr->loadedZones.find(foundZone) != zoneStreamingPtr->loadedZones.end()); }
 			if (foundZoneLoaded) continue;
-			Mesh* newMesh = new Mesh(zoneStreamingPtr->zoneLocation + foundZone + std::string(".3md"));
+			Mesh* newMesh = new Mesh(zoneStreamingPtr->zoneLocation + foundZone.name + std::string(".3md"));
 			GraphicsModel* graphicsModel;
 			RigidBody* rigidBody;
 			std::string placedMesh;
+			bool loadingLowResModel = false;
 			if (newMesh->DataGroups.size() == 1 && Mesh::getDataRowString(newMesh->DataGroups[0], "PROPS", "placedMesh", placedMesh)) {
+				loadingLowResModel = foundZone.lowRes;
 				std::string placedMeshAssetLoc;
 				Mesh::getDataRowString(newMesh->DataGroups[0], "PROPS", "placedMeshAssetLoc", placedMeshAssetLoc);
 				mat4 placedMeshTransform;
@@ -570,13 +582,27 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 				placedMeshTransform.i[0][1] = axisY.x; placedMeshTransform.i[1][1] = axisY.y; placedMeshTransform.i[2][1] = axisY.z; placedMeshTransform.i[3][1] = 0.0f;
 				placedMeshTransform.i[0][2] = axisZ.x; placedMeshTransform.i[1][2] = axisZ.y; placedMeshTransform.i[2][2] = axisZ.z; placedMeshTransform.i[3][2] = 0.0f;
 				placedMeshTransform.i[3][3] = 0.0f;
-				std::string meshPrependString = foundZone + ":";
+				std::string meshPrependString = foundZone.name + (loadingLowResModel ? ".lowres" : "") + ":";
 				newMesh = new Mesh(placedMesh, &meshPrependString);
 				TransformMesh(*newMesh, placedMeshTransform);
-				graphicsModel = new GraphicsModel(*newMesh, placedMeshAssetLoc, Instance);
-				rigidBody = new RigidBody(*newMesh, placedMeshAssetLoc, tmpOrient, tmpPos, true);
+				graphicsModel = new GraphicsModel(*newMesh, placedMeshAssetLoc, Instance, [](int, DataGroup& inpGroup) -> bool {
+					float tmpFloat;
+					return !Mesh::getDataRowFloat(inpGroup, "PROPS", "cloth", tmpFloat);
+					}, nullptr, true, true, false, loadingLowResModel);
+				rigidBody = new RigidBody(*newMesh, placedMeshAssetLoc, tmpOrient, tmpPos, true, [](int, DataGroup& inpGroup) -> bool {
+						return true;
+				}, nullptr, loadingLowResModel);
 			}
 			else {
+				zoneDesc otherPotentialZone = foundZone;
+				otherPotentialZone.lowRes = !foundZone.lowRes;
+				{std::unique_lock<std::mutex> lk(zoneStreamingPtr->zone_producer_mutex);
+				if (zoneStreamingPtr->loadedZones.find(otherPotentialZone) != zoneStreamingPtr->loadedZones.end())
+				{
+					zoneStreamingPtr->loadedZones[foundZone] = std::move(zoneStreamingPtr->loadedZones[otherPotentialZone]);
+					zoneStreamingPtr->loadedZones.erase(otherPotentialZone);
+					continue;
+				}}
 				graphicsModel = new GraphicsModel(*newMesh, zoneStreamingPtr->zoneLocation, Instance);
 				rigidBody = new RigidBody(*newMesh, zoneStreamingPtr->zoneLocation, tmpOrient, tmpPos, true);
 			}
@@ -592,6 +618,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 			unsigned long long worldParamsId = zoneStreamingPtr->worldParamsLoaders[threadId].Populate(*newMesh);
 			unsigned long long laddersId = zoneStreamingPtr->ladderSystemLoaders[threadId].Populate(*newMesh);
 			{std::unique_lock<std::mutex> lk(zoneStreamingPtr->zone_producer_mutex);
+			zoneStreamingPtr->loadedZones[foundZone].loadedLowResModel = loadingLowResModel;
 			zoneStreamingPtr->loadedZones[foundZone].worldParamsId = worldParamsId;
 			zoneStreamingPtr->loadedZones[foundZone].graphicsModel = graphicsModel;
 			zoneStreamingPtr->loadedZones[foundZone].rigidBody = rigidBody;
@@ -629,11 +656,11 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 			std::vector<std::string> cacheNames;
 			for (unsigned int i = 0; i != zoneStreamingPtr->foundZonesCached.size(); i++)
 			{
-				std::string& foundZone = zoneStreamingPtr->foundZonesCached[i];
+				zoneDesc& foundZone = zoneStreamingPtr->foundZonesCached[i];
 				SubmittedRenderItem curSri;
 				curSri.item = zoneStreamingPtr->loadedZones[foundZone].graphicsModel;
 				sri.push_back(curSri);
-				cacheNames.push_back(zoneStreamingPtr->zoneLocation + foundZone + ".matdf");
+				cacheNames.push_back(zoneStreamingPtr->zoneLocation + foundZone.name + (zoneStreamingPtr->loadedZones[foundZone].loadedLowResModel ? ".lowres" : "") + ".matdf");
 			}
 
 			GraphicsModel::UpdateSDFs(sri, false, cacheNames);
@@ -667,6 +694,13 @@ bool HIGHOMEGA::WORLD::ZoneStreamingClass::allZonesProduced()
 {
 	for (int i = 0; i != HIGHOMEGA_ZONE_STREAMING_THREAD_COUNT; i++)
 		if (!producedZones[i]) return false;
+	return true;
+}
+
+bool HIGHOMEGA::WORLD::ZoneStreamingClass::noZonesProduced()
+{
+	for (int i = 0; i != HIGHOMEGA_ZONE_STREAMING_THREAD_COUNT; i++)
+		if (producedZones[i]) return false;
 	return true;
 }
 
@@ -730,14 +764,13 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 {
 	if (!zoneStreamingActivated) return;
 
-	if (!producingZones && !allZonesProduced())
+	if (!producingZones && noZonesProduced())
 	{
 		int curTileX, curTileY, curTileZ;
 		curPos = inpPos;
-		curPos = inpPos;
 		getTileNums(curPos, curTileX, curTileY, curTileZ);
 
-		std::vector<std::string> foundZones;
+		std::vector<zoneDesc> foundZones;
 
 		for (int i = -tilesPerDrawRegionEdge(); i != tilesPerDrawRegionEdge() + 1; i++)
 			for (int j = -tilesPerDrawRegionEdge(); j != tilesPerDrawRegionEdge() + 1; j++)
@@ -748,10 +781,23 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 					checkZoneName += std::to_string(curTileY + j);
 					checkZoneName += std::string(".");
 					checkZoneName += std::to_string(curTileZ + k);
+					bool lowRes = false;
 					if (zoneReferences.find(checkZoneName) != zoneReferences.end())
 						for (unsigned int l = 0; l != zoneReferences[checkZoneName].size(); l++)
-							if ( std::find (foundZones.begin(), foundZones.end(), zoneReferences[checkZoneName][l]) == foundZones.end() )
-								foundZones.push_back(zoneReferences[checkZoneName][l]);
+						{
+							std::vector<zoneDesc>::iterator it = std::find_if(foundZones.begin(), foundZones.end(),
+								[&zoneNameRef = zoneReferences[checkZoneName][l]](const zoneDesc& x) {
+									return x.name == zoneNameRef;
+								});
+							if (it == foundZones.end())
+							{
+								foundZones.emplace_back();
+								foundZones.back().name = zoneReferences[checkZoneName][l];
+								foundZones.back().lowRes = lowRes;
+							}
+							else
+								if (!lowRes) it->lowRes = lowRes;
+						}
 				}
 
 		if (lastZonesSaved && foundZones == foundZonesCached) return;
@@ -777,11 +823,11 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 	if (allZonesProduced() && !PhysicalItemClass::booleanOpThread) // Do not evict, mid destruction
 	{
 		waitOnZoneProduction();
-		std::vector<std::string> zonesToRemove;
-		for (std::pair <const std::string, zone> & curZone : loadedZones)
+		std::vector<zoneDesc> zonesToRemove;
+		for (std::pair <const zoneDesc, zone> & curZone : loadedZones)
 		{
 			bool curZoneApproved = false;
-			for (std::string & foundZone : foundZonesCached)
+			for (zoneDesc & foundZone : foundZonesCached)
 				if (curZone.first == foundZone)
 				{
 					curZoneApproved = true;
@@ -791,7 +837,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 				zonesToRemove.push_back(curZone.first);
 		}
 
-		for (std::string & curZoneToRemove : zonesToRemove)
+		for (zoneDesc& curZoneToRemove : zonesToRemove)
 		{
 			for (int i = 0; i != loadedZones[curZoneToRemove].allSubmissionInfos.size(); i++)
 				loadedZones[curZoneToRemove].allSubmissionInfos[i].producer->Remove(loadedZones[curZoneToRemove].allSubmissionInfos[i]);
@@ -804,7 +850,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 			if (loadedZones[curZoneToRemove].worldParamsId != 0ull) worldParams.Remove(loadedZones[curZoneToRemove].worldParamsId);
 		}
 
-		for (std::pair<const std::string, zone> & curLoadedZone : loadedZones)
+		for (std::pair<const zoneDesc, zone> & curLoadedZone : loadedZones)
 		{
 			if (curLoadedZone.second.allSubmissionInfos.size() == 0)
 			{
@@ -820,7 +866,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 		worldParams.Combine(worldParamsLoaders);
 
 		CommonSharedMutex.lock();
-		for (std::string & curZoneToRemove : zonesToRemove)
+		for (zoneDesc& curZoneToRemove : zonesToRemove)
 		{
 			std::vector<RigidBody *>::iterator curBody = std::find(allBodies.begin(), allBodies.end(), loadedZones[curZoneToRemove].rigidBody);
 			if (curBody != allBodies.end())
@@ -830,7 +876,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 		mainLadderSystem.Combine(ladderSystemLoaders);
 		CommonSharedMutex.unlock();
 
-		for (std::string & curZoneToRemove : zonesToRemove)
+		for (zoneDesc& curZoneToRemove : zonesToRemove)
 		{
 			delete loadedZones[curZoneToRemove].rigidBody;
 			loadedZones.erase(curZoneToRemove);
@@ -842,7 +888,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 		CommonSharedMutex.unlock();
 
 		bool firstMinMax = true;
-		for (std::pair<const std::string, zone> & curZone : loadedZones)
+		for (std::pair<const zoneDesc, zone> & curZone : loadedZones)
 		{
 			if (curZone.second.graphicsModel->MaterialGeomMap.size() == 0) continue;
 			vec3 curMin, curMax;
@@ -903,7 +949,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::ClearContent()
 	producingZones = false;
 	setAllZonesNotProduced();
 
-	for (std::pair<const std::string, zone> & curLoadedZone : loadedZones)
+	for (std::pair<const zoneDesc, zone> & curLoadedZone : loadedZones)
 	{
 		zone & curZone = curLoadedZone.second;
 		for (int i = 0; i != curZone.allSubmissionInfos.size(); i++)

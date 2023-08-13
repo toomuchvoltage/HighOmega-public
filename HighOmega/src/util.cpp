@@ -67,25 +67,9 @@ HIGHOMEGA::ResourceLoader::FILE_LOAD_RESULT HIGHOMEGA::ResourceLoader::LoadFile(
 		return FILE_NOT_FOUND;
 }
 
-bool HIGHOMEGA::ResourceLoader::FindAsset(std::string belong, std::string fileName, std::string & finalPath, LOAD_LOCATION & loadLocation, LOAD_CHOSEN_ASSET & loadChosenAsset, bool searchingCommonFolder)
+bool HIGHOMEGA::ResourceLoader::FindAsset(std::string belong, std::string fileName, std::string & finalPath, LOAD_LOCATION & loadLocation, bool searchingCommonFolder)
 {
 	std::string fullPath;
-	std::size_t tgaPos = fileName.rfind(".tga");
-	if (tgaPos != std::string::npos)
-	{
-		std::string fileNameKTX = fileName;
-		fileNameKTX.replace(tgaPos, std::string(".tga").length(), ".ktx");
-		std::string ktxFullPath = belong + fileNameKTX;
-		std::ifstream file(ktxFullPath.c_str(), std::ios::in | std::ios::ate | std::ios::binary);
-		if (file.is_open() && file.tellg() > 0)
-		{
-			file.close();
-			loadLocation = searchingCommonFolder ? COMMON_FOLDER : ORIGINAL;
-			loadChosenAsset = IMG_KTX;
-			finalPath = ktxFullPath;
-			return true;
-		}
-	}
 
 	fullPath = belong + fileName;
 	std::ifstream file(fullPath.c_str(), std::ios::in | std::ios::ate | std::ios::binary);
@@ -93,21 +77,20 @@ bool HIGHOMEGA::ResourceLoader::FindAsset(std::string belong, std::string fileNa
 	{
 		file.close();
 		loadLocation = searchingCommonFolder ? COMMON_FOLDER : ORIGINAL;
-		loadChosenAsset = FILE;
 		finalPath = fullPath;
 		return true;
 	}
 	if (file.is_open()) file.close();
 
-	if (!searchingCommonFolder) return FindAsset("assets/common/", fileName, finalPath, loadLocation, loadChosenAsset, true);
+	if (!searchingCommonFolder) return FindAsset("assets/common/", fileName, finalPath, loadLocation, true);
 
 	return false;
 }
 
-HIGHOMEGA::ResourceLoader::RESOURCE_LOAD_RESULT HIGHOMEGA::ResourceLoader::Load(std::string belong, std::string fileName, unsigned char **content, unsigned int & size, LOAD_LOCATION & loadLocation, LOAD_CHOSEN_ASSET & loadChosenAsset)
+HIGHOMEGA::ResourceLoader::RESOURCE_LOAD_RESULT HIGHOMEGA::ResourceLoader::Load(std::string belong, std::string fileName, unsigned char **content, unsigned int & size, LOAD_LOCATION & loadLocation)
 {
 	std::string finalPath;
-	if (FindAsset(belong, fileName, finalPath, loadLocation, loadChosenAsset))
+	if (FindAsset(belong, fileName, finalPath, loadLocation))
 	{
 		if (LoadFile(finalPath, content, size) == FILE_EMPTY)
 			return RESOURCE_EMPTY;
