@@ -1,8 +1,8 @@
 # SauRay<sup>TM</sup> for CS:GO (via IPC through SourceMod)
 
-This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](http://sauray.tech) for [our CS:GO SourceMod plugin](https://github.com/toomuchvoltage/SauRay/tree/master/CSGO). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
+This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](https://sauray.tech) for [our CS:GO SourceMod plugin](https://github.com/toomuchvoltage/SauRay/tree/master/CSGO). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
 
-If you are unfamiliar with SauRay<sup>TM</sup>, please read [our technical brief](http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf) or visit [our website](http://sauray.tech).
+If you are unfamiliar with SauRay<sup>TM</sup>, please read [our technical brief](http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf) or visit [our website](https://sauray.tech).
 
 # License
 
@@ -25,7 +25,7 @@ Open source games with non-Libre licenses (i.e. non-GPL, non-MIT) also qualify a
 
 For games where at least the distributed server component is either open-source or moddable (in a manner permissible by the IP owner) the game must be sufficiently thin-client so that a SauRay(TM) integration does not result in crashes or defects that largely break the game in most multiplayer game modes. If you are unsure of whether your distributed binaries qualify for this category, please get in touch directly.
 
-We can be reached at the email address: sauray@toomuchvoltage.com or using the contact information found on the website http://sauray.tech .
+We can be reached at the email address: sauray@toomuchvoltage.com or using the contact information found on the website https://sauray.tech .
 
 If your game does not qualify under either of the above categories, contact us for a commercial license. The covered source files are protected by copyright and the aforementioned terms will apply beyond the life of US20220219086A1.
 
@@ -59,5 +59,5 @@ In the event that you modify raytracing shaders in `source_material/shaders`:
 
 # Contact Info
 
-Either email [sauray@toomuchvoltage.com](mailto:sauray@toomuchvoltage.com) or visit the contact page on [SauRay<sup>TM</sup>'s website](http://sauray.tech).
+Either email [sauray@toomuchvoltage.com](mailto:sauray@toomuchvoltage.com) or visit the contact page on [SauRay<sup>TM</sup>'s website](https://sauray.tech).
 For extension requests, you can also open issues on this GitHub repository as well.
