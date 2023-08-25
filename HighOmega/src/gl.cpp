@@ -287,11 +287,11 @@ void HIGHOMEGA::GL::MEMORY_MANAGER::FreeMem(std::vector<std::pair<MemChunk *, Su
 
 namespace HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2
 {
-	std::unordered_map<unsigned long long, std::vector<std::pair<MemChunk*, SubAlloc>>> AllocMemCWrapperDirectory;
+	std::unordered_map<uint64_t, std::vector<std::pair<MemChunk*, SubAlloc>>> AllocMemCWrapperDirectory;
 	VkDevice* deviceCached = nullptr;
-	unsigned long long AllocMemCWrapper(VkMemoryAllocateInfo* allocInfo, VkMemoryRequirements* memReq, VkDeviceMemory* devMemory, unsigned long long* devMemoryOffset)
+	uint64_t AllocMemCWrapper(VkMemoryAllocateInfo* allocInfo, VkMemoryRequirements* memReq, VkDeviceMemory* devMemory, uint64_t* devMemoryOffset)
 	{
-		unsigned long long allocId = mersenneTwister64BitPRNG();
+		uint64_t allocId = mersenneTwister64BitPRNG();
 		try
 		{
 			AllocMemCWrapperDirectory[allocId] = AllocMem(*deviceCached, *allocInfo, *memReq, MEMORY_MAP_TYPE::IMAGE, false);
@@ -305,31 +305,31 @@ namespace HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2
 		}
 	}
 
-	VkResult BindBufferMemoryCWrapper(VkBuffer buffer, unsigned long long allocId)
+	VkResult BindBufferMemoryCWrapper(VkBuffer buffer, uint64_t allocId)
 	{
 		std::unique_lock <std::mutex> lk(mem_manager_mutex);
 		return vkBindBufferMemory(*deviceCached, buffer, AllocMemCWrapperDirectory[allocId].begin()->first->mem, AllocMemCWrapperDirectory[allocId].begin()->second.offset);
 	}
 
-	VkResult BindImageMemoryCWrapper(VkImage image, unsigned long long allocId)
+	VkResult BindImageMemoryCWrapper(VkImage image, uint64_t allocId)
 	{
 		std::unique_lock <std::mutex> lk(mem_manager_mutex);
 		return vkBindImageMemory(*deviceCached, image, AllocMemCWrapperDirectory[allocId].begin()->first->mem, AllocMemCWrapperDirectory[allocId].begin()->second.offset);
 	}
 
-	VkResult MapMemoryCWrapper(unsigned long long allocId, VkDeviceSize offsetFromOffset, VkDeviceSize len, void** dataPtr)
+	VkResult MapMemoryCWrapper(uint64_t allocId, VkDeviceSize offsetFromOffset, VkDeviceSize len, void** dataPtr)
 	{
 		std::unique_lock <std::mutex> lk(mem_manager_mutex);
 		return vkMapMemory(*deviceCached, AllocMemCWrapperDirectory[allocId].begin()->first->mem, AllocMemCWrapperDirectory[allocId].begin()->second.offset + offsetFromOffset, len, 0, dataPtr);
 	}
 
-	void UnmapMemoryCWrapper(unsigned long long allocId)
+	void UnmapMemoryCWrapper(uint64_t allocId)
 	{
 		std::unique_lock <std::mutex> lk(mem_manager_mutex);
 		vkUnmapMemory(*deviceCached, AllocMemCWrapperDirectory[allocId].begin()->first->mem);
 	}
 
-	void FreeMemCWrapper(unsigned long long allocId)
+	void FreeMemCWrapper(uint64_t allocId)
 	{
 		FreeMem(AllocMemCWrapperDirectory[allocId], *deviceCached);
 		AllocMemCWrapperDirectory.erase(allocId);
