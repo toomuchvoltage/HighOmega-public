@@ -239,6 +239,7 @@ namespace HIGHOMEGA
 			static unsigned int JFAWorkGroupX();
 			static unsigned int JFAWorkGroupY();
 			static unsigned int JFAWorkGroupZ();
+			static unsigned int TessellateWorkGroup();
 
 			bool isInit = false;
 			std::unordered_map<GeometryClass *, std::vector<RasterVertex>> vertexCache;
@@ -763,7 +764,7 @@ namespace HIGHOMEGA
 			private:
 				WorldParamsClass * ptrWorldParams;
 				GraphicsModel skyDome;
-				GraphicsModel mountains, mountainsTess;
+				GraphicsModel mountains;
 				struct
 				{
 					float lightDir[4];
@@ -798,26 +799,30 @@ namespace HIGHOMEGA
 					float doAurora;
 				} SkyDomeParams, FullResSkyDomeParams;
 
+				BufferClass skyDomeParamsBuf, fullResSkyDomeParamsBuf;
+				ImageClass noiseImg, noiseImg2, moonImg, nebulaImg;
+
 				struct
 				{
-					unsigned int triCountTessFactorInputStrideOutputStride[4];
-				} PrimitiveTessellateParams;
-				BufferClass skyDomeParamsBuf, fullResSkyDomeParamsBuf, PrimitiveTessellateParamsBuf;
-				ImageClass noiseImg, noiseImg2, moonImg, nebulaImg;
+					unsigned int mode; // 0 - 5 skybox, 6 backdrop
+				} skyBoxCompositionParams;
+
+				BufferClass skyBoxCompositionParamsBuf[7];
 
 			public:
 				BufferClass rayleighMieBuf;
-				ShaderResourceSet tessellateMountainsShader;
-				ComputeSubmission tessellateMountains;
 				ShadowMapClass distantGeomShadowMapNear, distantGeomShadowMapFar;
 				ShadowMapScreenClass distantGeomScreenShadow[7];
-				ImageClass fullCubeMap, backDrop;
+				ImageClass skyCubeMap, skyBackDrop, fullCubeMap, fullBackDrop;
 				DepthStencilHolder backdropDS;
 				VisibilityPassClass distantVis[7];
 				GatherResolveClass distantGather[7];
+				GroupedRasterSubmission skySubmissions[7];
+				ShaderResourceSet skyShaders[7];
+				FrustumClass skyFrustums[7];
+				FramebufferClass skyFrameBuffers[7];
 				GroupedRasterSubmission submissions[7];
 				ShaderResourceSet shaders[7];
-				FrustumClass frustums[7];
 				FramebufferClass frameBuffers[7];
 
 				unsigned int GetBackdropWidth();
@@ -850,9 +855,6 @@ namespace HIGHOMEGA
 				vec3 ApproxGroundColor();
 
 				void UpdateSkyInfo(bool uploadToo = false);
-				unsigned int WorkGroupSize();
-				unsigned int TessellatePower();
-				unsigned int TessellateFactor();
 				void Create(TriClass & Tri, WorldParamsClass & WorldParams);
 				void RenderDistantGeom();
 				void Render(WorldParamsClass & WorldParams, GroupedTraceSubmission & rtSubmission);
