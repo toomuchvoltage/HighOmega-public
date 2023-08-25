@@ -536,6 +536,11 @@ unsigned int HIGHOMEGA::RENDER::GraphicsModel::JFAWorkGroupZ()
 	return 4;
 }
 
+unsigned int HIGHOMEGA::RENDER::GraphicsModel::TessellateWorkGroup()
+{
+	return 32;
+}
+
 void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderItem>& updateItems, bool forceRefresh, std::vector<std::string> cacheNames)
 {
 	if (RTInstance::Enabled()) return;
@@ -875,6 +880,63 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, st
 		else
 		{
 			curGeom->Geometry(ptrToInstance, verts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), mat.isAlphaKeyed, newGroupId, gpuResideOnly, inpImmutable);
+
+			float staticTessPower;
+			if (Mesh::getDataRowFloat(*propsBlock, "staticTessellationPower", staticTessPower))
+			{
+				struct
+				{
+					unsigned int triCountTessFactorInputStrideOutputStride[4];
+					float displacementAmount;
+				} PrimitiveTessellateParams;
+				PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1] = (unsigned int)powf(4.0f, staticTessPower);
+				Mesh::getDataRowFloat(*propsBlock, "staticTessellationDisplacement", PrimitiveTessellateParams.displacementAmount);
+
+				BufferClass PrimitiveTessellateParamsBuf;
+				ShaderResourceSet tessellateShader;
+				ComputeSubmission tessellateCompute;
+
+				std::vector<RasterVertex> tmpVerts;
+				tmpVerts.resize(verts.size() * PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1]);
+				MaterialGeomMap[mat].emplace_back();
+				MaterialGeomMap[mat].back().Geometry (ptrToInstance, tmpVerts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), mat.isAlphaKeyed, newGroupId, gpuResideOnly, inpImmutable);
+
+				PrimitiveTessellateParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, nullptr, (unsigned int)sizeof(PrimitiveTessellateParams));
+
+				tessellateShader.Create("shaders/primitiveTessellate.comp.spv", "main");
+				tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 0, curGeom->getVertBuffer());
+				tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 1, MaterialGeomMap[mat].back().getVertBuffer());
+				tessellateShader.AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 2, mat.hgtRef->elem);
+				tessellateShader.AddResource(RESOURCE_UBO, COMPUTE, 0, 3, PrimitiveTessellateParamsBuf);
+				tessellateCompute.MakeDispatch(Instance, std::string("default"), tessellateShader, 1, 1, 1);
+
+				for (unsigned int i = 0; i != (unsigned int)staticTessPower; i++)
+				{
+					switch (i)
+					{
+					case 0:
+						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] = (unsigned int)verts.size() / 3;
+						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[2] = PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1];
+						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[3] = PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1] / 4;
+						break;
+					default:
+						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] *= 4;
+						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[2] /= 4;
+						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[3] /= 4;
+						break;
+					}
+					PrimitiveTessellateParamsBuf.UploadSubData(0, &PrimitiveTessellateParams, sizeof(PrimitiveTessellateParams));
+					tessellateCompute.UpdateDispatchSize(Instance, std::string("default"), (unsigned int)ceil((double)PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] / (double)TessellateWorkGroup()), 1, 1);
+					tessellateCompute.Submit();
+				}
+
+				std::list<GeometryClass>::iterator it = MaterialGeomMap[mat].end();
+				--it;
+				it->SetMinMax(curGeom->getGeomMin() - vec3 (PrimitiveTessellateParams.displacementAmount), curGeom->getGeomMax() + vec3(PrimitiveTessellateParams.displacementAmount));
+				it->setRTBufferDirty();
+				--it;
+				MaterialGeomMap[mat].erase(it);
+			}
 		}
 
 		verts.clear();
@@ -3677,66 +3739,14 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::UpdateSkyInfo(bool uploadToo)
 	}
 }
 
-unsigned int HIGHOMEGA::RENDER::PASSES::SkyDomeClass::WorkGroupSize()
-{
-	return 32;
-}
-
-unsigned int HIGHOMEGA::RENDER::PASSES::SkyDomeClass::TessellatePower()
-{
-	return 4;
-}
-
-unsigned int HIGHOMEGA::RENDER::PASSES::SkyDomeClass::TessellateFactor()
-{
-	return (unsigned int)powf(4.0f, (float)TessellatePower());
-}
-
 void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Create(TriClass & Tri, WorldParamsClass & WorldParams)
 {
 	ptrWorldParams = &WorldParams;
 
 	Mesh domeMesh = Mesh("assets/models/skydome/skydome.3md");
 	Mesh mountainsMesh = Mesh("assets/models/mountains/mountains.3md");
-	Mesh mountainsTessMesh = Mesh("assets/models/mountains/mountains.3md");
 	skyDome.Model(domeMesh, "assets/models/skydome/", Instance);
 	mountains.Model(mountainsMesh, "assets/models/mountains/", Instance);
-	mountainsTess.Model(mountainsTessMesh, "assets/models/mountains/", Instance);
-	mountainsTess.BlankAndResize(TessellateFactor());
-
-	unsigned int originalMeshTriCount = mountains.MaterialGeomMap.begin()->second.begin()->getVertBuffer().getSize() / (sizeof(RasterVertex) * 3);
-	PrimitiveTessellateParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, nullptr, (unsigned int)sizeof(PrimitiveTessellateParams));
-
-	tessellateMountainsShader.Create("shaders/primitiveTessellate.comp.spv", "main");
-	tessellateMountainsShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 0, mountains.MaterialGeomMap.begin()->second.begin()->getVertBuffer());
-	tessellateMountainsShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 1, mountainsTess.MaterialGeomMap.begin()->second.begin()->getVertBuffer());
-	tessellateMountainsShader.AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 2, mountains.MaterialGeomMap.begin()->first.hgtRef->elem);
-	tessellateMountainsShader.AddResource(RESOURCE_UBO, COMPUTE, 0, 3, PrimitiveTessellateParamsBuf);
-	tessellateMountains.MakeDispatch(Instance, std::string ("default"), tessellateMountainsShader, 1, 1, 1);
-
-	for (unsigned int i = 0; i != TessellatePower(); i++)
-	{
-		PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1] = TessellateFactor();
-		switch (i)
-		{
-		case 0:
-			PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] = originalMeshTriCount;
-			PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[2] = TessellateFactor();
-			PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[3] = TessellateFactor() / 4;
-			break;
-		default:
-			PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] *= 4;
-			PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[2] /= 4;
-			PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[3] /= 4;
-			break;
-		}
-		PrimitiveTessellateParamsBuf.UploadSubData(0, &PrimitiveTessellateParams, sizeof(PrimitiveTessellateParams));
-		tessellateMountains.UpdateDispatchSize(Instance, std::string ("default"), (unsigned int)ceil((double)PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] / (double)WorkGroupSize()), 1, 1);
-		tessellateMountains.Submit();
-	}
-	vec3 mountainMin, mountainMax;
-	mountains.getModelMinMax(mountainMin, mountainMax);
-	mountainsTess.SetMinMax(mountainMin, mountainMax + vec3(0.0f, 1.0f, 0.0f));
 
 	PerlinNoise pn(128, 128, 128, vec3(0.1f), 6);
 	WorleyNoise wn(128, 128, 128, 10, true, 6);
@@ -3757,8 +3767,8 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Create(TriClass & Tri, WorldParams
 
 	UpdateSkyInfo();
 
-	distantGeomShadowMapNear.submission.Add(mountainsTess);
-	distantGeomShadowMapFar.submission.Add(mountainsTess);
+	distantGeomShadowMapNear.submission.Add(mountains);
+	distantGeomShadowMapFar.submission.Add(mountains);
 	distantGeomShadowMapNear.Create(WorldParams);
 	distantGeomShadowMapFar.Create(WorldParams);
 
@@ -3771,10 +3781,12 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Create(TriClass & Tri, WorldParams
 	skyDomeParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &SkyDomeParams, (unsigned int)sizeof(SkyDomeParams));
 	fullResSkyDomeParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &FullResSkyDomeParams, (unsigned int)sizeof(FullResSkyDomeParams));
 
+	skyCubeMap.CreateCubeMap(Instance, R16G16B16A16F, GetCubeResolution(), GetCubeResolution());
 	fullCubeMap.CreateCubeMap(Instance, R16G16B16A16F, GetCubeResolution(), GetCubeResolution());
-	backDrop.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, GetBackdropWidth(), GetBackdropHeight(), true, false);
-	depthStencilAttach.CreateOffScreenDepthStencil(Instance, fullCubeMap.getWidth(), fullCubeMap.getHeight());
-	backdropDS.depthStencilAttach.CreateOffScreenDepthStencil(Instance, backDrop.getWidth(), backDrop.getWidth());
+	skyBackDrop.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, GetBackdropWidth(), GetBackdropHeight(), true, false);
+	fullBackDrop.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, ScreenSize.width, ScreenSize.height, false, false);
+	depthStencilAttach.CreateOffScreenDepthStencil(Instance, skyCubeMap.getWidth(), skyCubeMap.getHeight());
+	backdropDS.depthStencilAttach.CreateOffScreenDepthStencil(Instance, skyBackDrop.getWidth(), skyBackDrop.getWidth());
 
 	for (int i = 0; i != 7; i++)
 	{
@@ -3804,46 +3816,76 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Create(TriClass & Tri, WorldParams
 				skyDomeLook = vec3(0.0f, 0.0f, 1.0f);
 				skyDomeUp = vec3(0.0f, 1.0f, 0.0f);
 			}
-			frustums[i].CreatePerspective(vec3(0.0f, InnerRad(), 0.0f), skyDomeLook, skyDomeUp, 90.0f, 1.0f, 0.1f, 10.0f);
-			frustums[i].Update();
+			skyFrustums[i].CreatePerspective(vec3(0.0f, InnerRad(), 0.0f), skyDomeLook, skyDomeUp, 90.0f, 1.0f, 0.1f, 10.0f);
+			skyFrustums[i].Update();
 		}
 		else {
-			frustums[i].CopyFromFrustum(MainFrustum);
-			frustums[i].eye = vec3(0.0f, InnerRad(), 0.0f);
-			frustums[i].Update();
+			skyFrustums[i].CopyFromFrustum(MainFrustum);
+			skyFrustums[i].eye = vec3(0.0f, InnerRad(), 0.0f);
+			skyFrustums[i].Update();
 		}
 
-		distantVis[i].Create(i < 6 ? fullCubeMap.getWidth() : backDrop.getWidth(), i < 6 ? fullCubeMap.getHeight() : backDrop.getHeight(), frustums[i]);
-		distantVis[i].submission.Add(mountainsTess);
-		distantGather[i].Create(distantVis[i], Tri, frustums[i], true);
+		distantVis[i].Create(i < 6 ? skyCubeMap.getWidth() : ScreenSize.width, i < 6 ? skyCubeMap.getHeight() : ScreenSize.height, skyFrustums[i]);
+		distantVis[i].submission.Add(mountains);
+		distantGather[i].Create(distantVis[i], Tri, skyFrustums[i], true);
 
 		distantGeomScreenShadow[i].Create(Tri, distantGeomShadowMapNear, distantGeomShadowMapFar, distantGather[i]);
 
-		shaders[i].Create("shaders/skyDomeRender.vert.spv", "main", "shaders/skyDomeRender.frag.spv", "main");
-		shaders[i].AddResource(RESOURCE_UBO, VERTEX | FRAGMENT, 0, 0, frustums[i].Buffer);
-		shaders[i].AddResource(RESOURCE_UBO, VERTEX | FRAGMENT, 0, 1, rayleighMieBuf);
-		shaders[i].AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 2, distantGeomScreenShadow[i].shadowMapScreen);
-		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 3, distantGather[i].worldPosAttach);
-		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, distantGather[i].normalAttach);
-		shaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 5, i < 6 ? skyDomeParamsBuf : fullResSkyDomeParamsBuf);
-		shaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 6, WorldParams.GetRenderTimeBuffer());
-		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 7, noiseImg);
-		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 8, noiseImg2);
-		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 9, moonImg);
-		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 10, nebulaImg);
+		skyShaders[i].Create("shaders/skyDomeRender.vert.spv", "main", "shaders/skyDomeRender.frag.spv", "main");
+		skyShaders[i].AddResource(RESOURCE_UBO, VERTEX | FRAGMENT, 0, 0, skyFrustums[i].Buffer);
+		skyShaders[i].AddResource(RESOURCE_UBO, VERTEX | FRAGMENT, 0, 1, rayleighMieBuf);
+		skyShaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 2, i < 6 ? skyDomeParamsBuf : fullResSkyDomeParamsBuf);
+		skyShaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 3, WorldParams.GetRenderTimeBuffer());
+		skyShaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, noiseImg);
+		skyShaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 5, noiseImg2);
+		skyShaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 6, moonImg);
+		skyShaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 7, nebulaImg);
+		skyShaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 8, distantGather[i].worldPosAttach);
 
-		submissions[i].Add(skyDome);
-		submissions[i].Create(Instance);
+		skySubmissions[i].Add(skyDome);
+		skySubmissions[i].Create(Instance);
 
 		if (i < 6) {
-			frameBuffers[i].AddColorAttachmentWithLayer(fullCubeMap, i);
-			frameBuffers[i].SetDepthStencil(depthStencilAttach);
+			skyFrameBuffers[i].AddColorAttachmentWithLayer(skyCubeMap, i);
+			skyFrameBuffers[i].SetDepthStencil(depthStencilAttach);
 		}
 		else {
-			frameBuffers[i].AddColorAttachment(backDrop);
-			frameBuffers[i].SetDepthStencil(backdropDS.depthStencilAttach);
+			skyFrameBuffers[i].AddColorAttachment(skyBackDrop);
+			skyFrameBuffers[i].SetDepthStencil(backdropDS.depthStencilAttach);
+		}
+		skyFrameBuffers[i].Create(OFF_SCREEN, Instance, Window);
+		skySubmissions[i].SetFrameBuffer(skyFrameBuffers[i]);
+		skySubmissions[i].makeAsync();
+		skySubmissions[i].SetShader("default", skyShaders[i]);
+
+		skyBoxCompositionParams.mode = i;
+		skyBoxCompositionParamsBuf[i].Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &skyBoxCompositionParams, (unsigned int)sizeof(skyBoxCompositionParams));
+
+		shaders[i].Create("shaders/postprocess.vert.spv", "main", "shaders/skyBoxComposition.frag.spv", "main");
+		shaders[i].AddResource(RESOURCE_UBO, VERTEX, 0, 0, Tri.triFrustum.Buffer);
+		shaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 1, skyFrustums[i].Buffer);
+		shaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 2, rayleighMieBuf);
+		shaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 3, i < 6 ? skyDomeParamsBuf : fullResSkyDomeParamsBuf);
+		shaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 4, WorldParams.GetRenderTimeBuffer());
+		shaders[i].AddResource(RESOURCE_UBO, FRAGMENT, 0, 5, skyBoxCompositionParamsBuf[i]);
+		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 6, skyCubeMap);
+		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 7, skyBackDrop);
+		shaders[i].AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 8, distantGeomScreenShadow[i].shadowMapScreen);
+		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 9, distantGather[i].worldPosAttach);
+		shaders[i].AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 10, distantGather[i].normalAttach);
+
+		submissions[i].Add(Tri.triModel);
+		submissions[i].Create(Instance);
+		if (i < 6) {
+			frameBuffers[i].AddColorAttachmentWithLayer(fullCubeMap, i);
+		}
+		else {
+			frameBuffers[i].AddColorAttachment(fullBackDrop);
 		}
 		frameBuffers[i].Create(OFF_SCREEN, Instance, Window);
+		PipelineFlags defaultPF;
+		defaultPF.depthTest = defaultPF.depthWrite = false;
+		submissions[i].SetDefaultPipelineFlags(defaultPF);
 		submissions[i].SetFrameBuffer(frameBuffers[i]);
 		submissions[i].makeAsync();
 		submissions[i].SetShader("default", shaders[i]);
@@ -3870,9 +3912,9 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Render(WorldParamsClass & WorldPar
 	fullResSkyDomeParamsBuf.UploadSubData(0, &FullResSkyDomeParams, sizeof(FullResSkyDomeParams));
 
 	// Re-render the mountains for the backdrop... 
-	frustums[6].CopyFromFrustum(MainFrustum);
-	frustums[6].eye = vec3(0.0f, InnerRad(), 0.0f);
-	frustums[6].Update();
+	skyFrustums[6].CopyFromFrustum(MainFrustum);
+	skyFrustums[6].eye = vec3(0.0f, InnerRad(), 0.0f);
+	skyFrustums[6].Update();
 
 	distantVis[6].Render();
 	distantGather[6].Render();
@@ -3880,7 +3922,7 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Render(WorldParamsClass & WorldPar
 	// Update shadow map
 	vec3 mountainMin, mountainMax;
 	mountains.getModelMinMax(mountainMin, mountainMax);
-	distantGeomShadowMapNear.Render(mountainMin, mountainMax, 1.0f, vec2 (0.0000025f, 0.000005f), &frustums[6]);
+	distantGeomShadowMapNear.Render(mountainMin, mountainMax, 1.0f, vec2 (0.0000025f, 0.000005f), &skyFrustums[6]);
 	distantGeomShadowMapFar.Render(mountainMin, mountainMax, 1.0f, vec2(0.0000025f, 0.000005f));
 
 	static bool firstRun = true;
@@ -3895,6 +3937,14 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Render(WorldParamsClass & WorldPar
 		for (int i = 0; i != 7; i++)
 		{
 			if (i != 6)
+				skySubmissions[i].makeAsync();
+			else
+				skySubmissions[i].makeSerial();
+			skySubmissions[i].Render();
+		}
+		for (int i = 0; i != 7; i++)
+		{
+			if (i != 6)
 				submissions[i].makeAsync();
 			else
 				submissions[i].makeSerial();
@@ -3904,14 +3954,21 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Render(WorldParamsClass & WorldPar
 	}
 	else
 	{
-		if (frameCounter % 12 < 6)
+		if (frameCounter % 18 < 6)
 		{
-			distantGeomScreenShadow[frameCounter % 12].makeAsync();
-			distantGeomScreenShadow[frameCounter % 12].Render(rtSubmission);
+			distantGeomScreenShadow[frameCounter % 18].makeAsync();
+			distantGeomScreenShadow[frameCounter % 18].Render(rtSubmission);
+		}
+		else if (frameCounter % 18 < 12)
+		{
+			skySubmissions[frameCounter % 18 - 6].Render();
 		}
 		else
-			submissions[frameCounter % 12 - 6].Render();
+		{
+			submissions[frameCounter % 18 - 12].Render();
+		}
 		distantGeomScreenShadow[6].Render(rtSubmission);
+		skySubmissions[6].Render();
 		submissions[6].Render();
 		frameCounter++;
 	}
@@ -4683,7 +4740,7 @@ void HIGHOMEGA::RENDER::PASSES::ModulateClass::Create(TriClass & PostProcessTri,
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, GatherPass.normalAttach);
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 5, radiosityMaps);
 	shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 6, PathTrace.PathTraceParamsBuf);
-	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 7, SkyDome.backDrop);
+	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 7, SkyDome.fullBackDrop);
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 8, SkyDome.fullCubeMap);
 	shader.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 9, shadowMapScreen.shadowMapScreen);
 	shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 10, SkyDome.rayleighMieBuf);
@@ -4811,7 +4868,7 @@ void HIGHOMEGA::RENDER::PASSES::ScreenSpaceFXClass::Create(TriClass & PostProces
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 3, ScreenSpaceGather.ssGatherPosAlbedo);
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, ScreenSpaceGather.ssGatherNormRoughnessBackdrop);
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 5, SkyDome.fullCubeMap);
-	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 6, SkyDome.backDrop);
+	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 6, SkyDome.fullBackDrop);
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 7, NearScattering.blurPass.blurVAttach);
 	shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 8, MainFrustum.Buffer);
 	submission.SetShader("default", shader);
