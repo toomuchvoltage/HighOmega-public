@@ -59,6 +59,11 @@ namespace HIGHOMEGA
 		class DescriptorSets;
 		namespace MEMORY_MANAGER
 		{
+			namespace LIBKTX2
+			{
+				VkResult BindBufferMemoryCWrapper(VkBuffer buffer, uint64_t allocId);
+				VkResult BindImageMemoryCWrapper(VkImage image, uint64_t allocId);
+			};
 			struct SubAlloc
 			{
 				unsigned long long offset = 0, len = 0;
@@ -198,6 +203,8 @@ namespace HIGHOMEGA
 		class ImageClass;
 		class FenceClass : public CStyleWrapper
 		{
+			friend VkResult MEMORY_MANAGER::LIBKTX2::BindBufferMemoryCWrapper(VkBuffer buffer, uint64_t allocId);
+			friend VkResult MEMORY_MANAGER::LIBKTX2::BindImageMemoryCWrapper(VkImage image, uint64_t allocId);
 			friend class RasterletClass;
 			friend class SemaphoreClass;
 			friend class BufferClass;
@@ -620,6 +627,8 @@ namespace HIGHOMEGA
 		class InstanceClass : public CommandBuffer
 		{
 			friend bool getMemoryType(InstanceClass *ptrToInstance, uint32_t typeBits, VkFlags properties, uint32_t * typeIndex);
+			friend VkResult MEMORY_MANAGER::LIBKTX2::BindBufferMemoryCWrapper(VkBuffer buffer, uint64_t allocId);
+			friend VkResult MEMORY_MANAGER::LIBKTX2::BindImageMemoryCWrapper(VkImage image, uint64_t allocId);
 			friend class DescriptorSetLayout;
 			friend class DescriptorSets;
 			friend class KHR_RT::RTInstance;
