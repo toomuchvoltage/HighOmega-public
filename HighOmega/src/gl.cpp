@@ -288,15 +288,16 @@ void HIGHOMEGA::GL::MEMORY_MANAGER::FreeMem(std::vector<std::pair<MemChunk *, Su
 namespace HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2
 {
 	std::unordered_map<uint64_t, std::vector<std::pair<MemChunk*, SubAlloc>>> AllocMemCWrapperDirectory;
+	std::mutex allocmem_wrapper_directory_mutex;
 	VkDevice* deviceCached = nullptr;
-	uint64_t AllocMemCWrapper(VkMemoryAllocateInfo* allocInfo, VkMemoryRequirements* memReq, VkDeviceMemory* devMemory, uint64_t* devMemoryOffset)
+	uint64_t AllocMemCWrapper(VkMemoryAllocateInfo* allocInfo, VkMemoryRequirements* memReq, uint64_t* numPages)
 	{
+		std::unique_lock <std::mutex> lk(allocmem_wrapper_directory_mutex);
 		uint64_t allocId = mersenneTwister64BitPRNG();
 		try
 		{
 			AllocMemCWrapperDirectory[allocId] = AllocMem(*deviceCached, *allocInfo, *memReq, MEMORY_MAP_TYPE::IMAGE, false);
-			*devMemory = AllocMemCWrapperDirectory[allocId].begin()->first->mem;
-			*devMemoryOffset = AllocMemCWrapperDirectory[allocId].begin()->second.offset;
+			*numPages = AllocMemCWrapperDirectory[allocId].size();
 			return allocId;
 		}
 		catch (...)
@@ -307,30 +308,103 @@ namespace HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2
 
 	VkResult BindBufferMemoryCWrapper(VkBuffer buffer, uint64_t allocId)
 	{
-		std::unique_lock <std::mutex> lk(mem_manager_mutex);
-		return vkBindBufferMemory(*deviceCached, buffer, AllocMemCWrapperDirectory[allocId].begin()->first->mem, AllocMemCWrapperDirectory[allocId].begin()->second.offset);
+		std::unique_lock <std::mutex> lk(allocmem_wrapper_directory_mutex);
+		std::unique_lock <std::mutex> lk2(mem_manager_mutex);
+		if (Instance.SupportsSparseResources())
+		{
+			FenceClass sparseFence;
+			sparseFence.Fence(&Instance);
+			sparseFence.Reset();
+			VkSparseBufferMemoryBindInfo bufferMemoryBinds;
+			bufferMemoryBinds.buffer = buffer;
+			std::vector<VkSparseMemoryBind> memoryBinds;
+			unsigned long long resourceOffset = 0ull;
+			for (std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>& curSubAlloc : AllocMemCWrapperDirectory[allocId])
+			{
+				VkSparseMemoryBind curBufBind = {};
+				curBufBind.memory = curSubAlloc.first->mem;
+				curBufBind.memoryOffset = (VkDeviceSize)curSubAlloc.second.offset;
+				curBufBind.size = (VkDeviceSize)curSubAlloc.second.len;
+				curBufBind.resourceOffset = (VkDeviceSize)resourceOffset;
+				resourceOffset += curSubAlloc.second.len;
+				memoryBinds.push_back(curBufBind);
+			}
+			bufferMemoryBinds.bindCount = (uint32_t)memoryBinds.size();
+			bufferMemoryBinds.pBinds = memoryBinds.data();
+			VkBindSparseInfo vkBindSparseInfo = {};
+			vkBindSparseInfo.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
+			vkBindSparseInfo.bufferBindCount = 1;
+			vkBindSparseInfo.pBufferBinds = &bufferMemoryBinds;
+			VkResult result = vkQueueBindSparse(Instance.submissionQueue, 1, &vkBindSparseInfo, sparseFence.fence);
+			sparseFence.Wait();
+			return result;
+		}
+		else
+		{
+			return vkBindBufferMemory(*deviceCached, buffer, AllocMemCWrapperDirectory[allocId].begin()->first->mem, AllocMemCWrapperDirectory[allocId].begin()->second.offset);
+		}
 	}
 
 	VkResult BindImageMemoryCWrapper(VkImage image, uint64_t allocId)
 	{
-		std::unique_lock <std::mutex> lk(mem_manager_mutex);
-		return vkBindImageMemory(*deviceCached, image, AllocMemCWrapperDirectory[allocId].begin()->first->mem, AllocMemCWrapperDirectory[allocId].begin()->second.offset);
+		std::unique_lock <std::mutex> lk(allocmem_wrapper_directory_mutex);
+		std::unique_lock <std::mutex> lk2(mem_manager_mutex);
+		if (Instance.SupportsSparseResources())
+		{
+			FenceClass sparseFence;
+			sparseFence.Fence(&Instance);
+			sparseFence.Reset();
+			VkSparseImageOpaqueMemoryBindInfo imageMemoryBinds;
+			imageMemoryBinds.image = image;
+			std::vector<VkSparseMemoryBind> memoryBinds;
+			unsigned long long resourceOffset = 0ull;
+			for (std::pair<MEMORY_MANAGER::MemChunk*, MEMORY_MANAGER::SubAlloc>& curSubAlloc : AllocMemCWrapperDirectory[allocId])
+			{
+				VkSparseMemoryBind curImgBind = {};
+				curImgBind.memory = curSubAlloc.first->mem;
+				curImgBind.memoryOffset = (VkDeviceSize)curSubAlloc.second.offset;
+				curImgBind.size = (VkDeviceSize)curSubAlloc.second.len;
+				curImgBind.resourceOffset = (VkDeviceSize)resourceOffset;
+				resourceOffset += curSubAlloc.second.len;
+				memoryBinds.push_back(curImgBind);
+			}
+			imageMemoryBinds.bindCount = (uint32_t)memoryBinds.size();
+			imageMemoryBinds.pBinds = memoryBinds.data();
+			VkBindSparseInfo vkBindSparseInfo = {};
+			vkBindSparseInfo.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
+			vkBindSparseInfo.imageOpaqueBindCount = 1;
+			vkBindSparseInfo.pImageOpaqueBinds = &imageMemoryBinds;
+			VkResult result = vkQueueBindSparse(Instance.submissionQueue, 1, &vkBindSparseInfo, sparseFence.fence);
+			sparseFence.Wait();
+			return result;
+		}
+		else
+		{
+			return vkBindImageMemory(*deviceCached, image, AllocMemCWrapperDirectory[allocId].begin()->first->mem, AllocMemCWrapperDirectory[allocId].begin()->second.offset);
+		}
 	}
 
-	VkResult MapMemoryCWrapper(uint64_t allocId, VkDeviceSize offsetFromOffset, VkDeviceSize len, void** dataPtr)
+	VkResult MapMemoryCWrapper(uint64_t allocId, uint64_t pageNumber, VkDeviceSize *mapLength, void** dataPtr)
 	{
-		std::unique_lock <std::mutex> lk(mem_manager_mutex);
-		return vkMapMemory(*deviceCached, AllocMemCWrapperDirectory[allocId].begin()->first->mem, AllocMemCWrapperDirectory[allocId].begin()->second.offset + offsetFromOffset, len, 0, dataPtr);
+		std::unique_lock <std::mutex> lk(allocmem_wrapper_directory_mutex);
+		std::unique_lock <std::mutex> lk2(mem_manager_mutex);
+		if (AllocMemCWrapperDirectory.find(allocId) == AllocMemCWrapperDirectory.end() || pageNumber >= AllocMemCWrapperDirectory[allocId].size()) return VK_ERROR_MEMORY_MAP_FAILED;
+		*mapLength = AllocMemCWrapperDirectory[allocId][pageNumber].second.len;
+		return vkMapMemory(*deviceCached, AllocMemCWrapperDirectory[allocId][pageNumber].first->mem, AllocMemCWrapperDirectory[allocId][pageNumber].second.offset, *mapLength, 0, dataPtr);
 	}
 
-	void UnmapMemoryCWrapper(uint64_t allocId)
+	void UnmapMemoryCWrapper(uint64_t allocId, uint64_t pageNumber)
 	{
-		std::unique_lock <std::mutex> lk(mem_manager_mutex);
-		vkUnmapMemory(*deviceCached, AllocMemCWrapperDirectory[allocId].begin()->first->mem);
+		std::unique_lock <std::mutex> lk(allocmem_wrapper_directory_mutex);
+		std::unique_lock <std::mutex> lk2(mem_manager_mutex);
+		if (AllocMemCWrapperDirectory.find(allocId) == AllocMemCWrapperDirectory.end() || pageNumber >= AllocMemCWrapperDirectory[allocId].size()) return;
+		vkUnmapMemory(*deviceCached, AllocMemCWrapperDirectory[allocId][pageNumber].first->mem);
 	}
 
 	void FreeMemCWrapper(uint64_t allocId)
 	{
+		std::unique_lock <std::mutex> lk(allocmem_wrapper_directory_mutex);
+		if (AllocMemCWrapperDirectory.find(allocId) == AllocMemCWrapperDirectory.end()) return;
 		FreeMem(AllocMemCWrapperDirectory[allocId], *deviceCached);
 		AllocMemCWrapperDirectory.erase(allocId);
 	}
@@ -3161,14 +3235,14 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 		if (ktx2VDIRef)
 		{
 			HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::deviceCached = &ktx2VDIRef->elem.ktxVDI.device;
-			subAllocatorCallbacks subAllocCallbacks;
+			ktxVulkanTexture_subAllocatorCallbacks subAllocCallbacks;
 			subAllocCallbacks.allocMemFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::AllocMemCWrapper;
 			subAllocCallbacks.bindBufferFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::BindBufferMemoryCWrapper;
 			subAllocCallbacks.bindImageFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::BindImageMemoryCWrapper;
 			subAllocCallbacks.memoryMapFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::MapMemoryCWrapper;
 			subAllocCallbacks.memoryUnmapFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::UnmapMemoryCWrapper;
 			subAllocCallbacks.freeMemFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::FreeMemCWrapper;
-			ktxVulkanTexture_Destruct(&ktxVulkanTexture, ktx2VDIRef->elem.ktxVDI.device, nullptr, &subAllocCallbacks);
+			ktxVulkanTexture_Destruct_WithPotentialSuballocator(&ktxVulkanTexture, ktx2VDIRef->elem.ktxVDI.device, nullptr, &subAllocCallbacks);
 			{std::unique_lock <std::mutex> lk(ktx2VDIPools.mtx);
 			ktx2VDIPools.dir[ktx2VDIRef->keyRef].elemCount--;
 			if (ktx2VDIPools.dir[ktx2VDIRef->keyRef].elemCount == 0)
@@ -3492,15 +3566,15 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 		}
 		HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::deviceCached = &ktx2VDIRef->elem.ktxVDI.device;
 		{std::unique_lock<std::mutex> lk(cachedInstance->queue_mutex);
-		subAllocatorCallbacks subAllocCallbacks;
+		ktxVulkanTexture_subAllocatorCallbacks subAllocCallbacks;
 		subAllocCallbacks.allocMemFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::AllocMemCWrapper;
 		subAllocCallbacks.bindBufferFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::BindBufferMemoryCWrapper;
 		subAllocCallbacks.bindImageFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::BindImageMemoryCWrapper;
 		subAllocCallbacks.memoryMapFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::MapMemoryCWrapper;
 		subAllocCallbacks.memoryUnmapFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::UnmapMemoryCWrapper;
 		subAllocCallbacks.freeMemFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::FreeMemCWrapper;
-		result = ktxTexture_VkUploadEx((ktxTexture*)kTexture, &ktx2VDIRef->elem.ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, &subAllocCallbacks);
-			if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxVulkanTexture from ktx file"); }}
+		result = ktxTexture_VkUploadEx_WithPotentialSuballocator((ktxTexture*)kTexture, &ktx2VDIRef->elem.ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, &subAllocCallbacks);
+		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxVulkanTexture from ktx file"); }}
 		ktxTexture_Destroy((ktxTexture*)kTexture);
 
 		haveKTXVulkanTexture = true;
