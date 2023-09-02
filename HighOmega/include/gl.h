@@ -1278,7 +1278,6 @@ namespace HIGHOMEGA
 			bool isAlphaKeyedCache;
 			bool withStagingBuffersCache = true;
 			bool immutable = true;
-			void getMinMax(std::vector<RasterVertex>& inpVertexData);
 
 		public:
 
@@ -1299,6 +1298,7 @@ namespace HIGHOMEGA
 			void setRTBufferDirty();
 			std::string getGroupId();
 			std::string & getArmatureId();
+			static void getMinMax(std::vector<RasterVertex>& inpVertexData, vec3& outMin, vec3& outMax);
 			vec3 & getGeomMin();
 			vec3 & getGeomMax();
 			vec3 & getUntransformedGeomMin();

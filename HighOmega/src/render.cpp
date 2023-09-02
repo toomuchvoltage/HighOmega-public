@@ -244,7 +244,7 @@ CacheItem<ImageClass>* HIGHOMEGA::RENDER::MeshMaterial::TryDifferentLODs(std::st
 	return texRef;
 }
 
-HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propBlock, std::string belong, InstanceClass & ptrToInstance, bool loadLowRes)
+HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propBlock, std::string belong, InstanceClass & ptrToInstance)
 {
 	if (!Mesh::getDataRowString(propBlock, "texname", diffName)) throw std::runtime_error("Bad diffName fetch for graphics model load");
 
@@ -254,27 +254,27 @@ HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propB
 	mipmap = true;
 	if (diffName.find("{nomip}") != std::string::npos) mipmap = false;
 
-	diffRef = TryDifferentLODs(belong, diffName, ptrToInstance, true, isTerrain ? 4 : 1, mipmap, true, loadLowRes);
+	diffRef = TryDifferentLODs(belong, diffName, ptrToInstance, true, isTerrain ? 4 : 1, mipmap, true);
 	if (!diffRef) throw std::runtime_error("Could not find albedo map");
 
 	nrmName = diffName;
 	nrmName.replace(nrmName.rfind(".tga"), std::string(".tga").length(), ".nrm.tga");
-	nrmRef = TryDifferentLODs(belong, nrmName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, false, loadLowRes);
+	nrmRef = TryDifferentLODs(belong, nrmName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, false);
 	if (!nrmRef) nrmName = "";
 
 	rghName = diffName;
 	rghName.replace(rghName.rfind(".tga"), std::string(".tga").length(), ".rgh.tga");
-	rghRef = TryDifferentLODs(belong, rghName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, false, loadLowRes);
+	rghRef = TryDifferentLODs(belong, rghName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, false);
 	if (!rghRef) rghName = "";
 
 	hgtName = diffName;
 	hgtName.replace(hgtName.rfind(".tga"), std::string(".tga").length(), ".hgt.tga");
-	hgtRef = TryDifferentLODs(belong, hgtName, ptrToInstance, true, isTerrain ? 4 : 1, mipmap, false, loadLowRes); // Height map needs this again because the albedo map stencils are not accessible
+	hgtRef = TryDifferentLODs(belong, hgtName, ptrToInstance, true, isTerrain ? 4 : 1, mipmap, false); // Height map needs this again because the albedo map stencils are not accessible
 	if (!hgtRef) hgtName = "";
 
 	spcName = diffName;
 	spcName.replace(spcName.rfind(".tga"), std::string(".tga").length(), ".spc.tga");
-	spcRef = TryDifferentLODs(belong, spcName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, true, loadLowRes);
+	spcRef = TryDifferentLODs(belong, spcName, ptrToInstance, true, isTerrain ? 3 : 1, mipmap, true);
 	if (!spcRef) spcName = "";
 
 	if (!Mesh::getDataRowFloat(propBlock, "emissivity", emissivity)) emissivity = 0.0f;
@@ -760,7 +760,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(std::string & newGroupId, MeshMater
 	isInit = true;
 }
 
-void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction, mat4 *inpTransform, bool gpuResideOnly, bool inpImmutable, bool loadAnimationData, bool loadLowRes)
+void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction, mat4 *inpTransform, bool gpuResideOnly, bool inpImmutable, bool loadAnimationData, vec3* viewPos)
 {
 	if (isInit) RemovePast();
 
@@ -865,13 +865,30 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, st
 		HIGHOMEGA::MESH::DataBlock *propsBlock = nullptr;
 		if (!Mesh::getDataBlock(curPolyGroup, "PROPS", &propsBlock)) continue;
 
-		MeshMaterial mat(*propsBlock, belong, ptrToInstance, loadLowRes);
-		MaterialGeomMap[mat].emplace_back ();
-		GeometryClass *curGeom = &MaterialGeomMap[mat].back();
+		MeshMaterial mat(*propsBlock, belong, ptrToInstance);
 
 		std::string newGroupId = curPolyGroup.name;
 		newGroupId += "_";
 		newGroupId += std::to_string(i);
+
+		float staticTessPower;
+		if (!hasAnim && Mesh::getDataRowFloat(*propsBlock, "staticTessellationPower", staticTessPower))
+		{
+			tessellateGeom[newGroupId].maxTessellationPower = staticTessPower;
+			tessellateGeom[newGroupId].curTessellationPower = 0.0f;
+			tessellateGeom[newGroupId].targetTessellationPower = staticTessPower;
+			Mesh::getDataRowFloat(*propsBlock, "staticTessellationDisplacement", tessellateGeom[newGroupId].tessellationDisplacement);
+			tessellateGeom[newGroupId].verts = verts;
+			tessellateGeom[newGroupId].curGeom = nullptr;
+			tessellateGeom[newGroupId].addedGeom = nullptr;
+			tessellateGeom[newGroupId].mat = mat;
+
+			verts.clear();
+			continue;
+		}
+
+		MaterialGeomMap[mat].emplace_back ();
+		GeometryClass *curGeom = &MaterialGeomMap[mat].back();
 
 		if (hasAnim)
 		{
@@ -880,68 +897,13 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, st
 		else
 		{
 			curGeom->Geometry(ptrToInstance, verts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), mat.isAlphaKeyed, newGroupId, gpuResideOnly, inpImmutable);
-
-			float staticTessPower;
-			if (Mesh::getDataRowFloat(*propsBlock, "staticTessellationPower", staticTessPower))
-			{
-				struct
-				{
-					unsigned int triCountTessFactorInputStrideOutputStride[4];
-					float displacementAmount;
-				} PrimitiveTessellateParams;
-				PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1] = (unsigned int)powf(4.0f, staticTessPower);
-				Mesh::getDataRowFloat(*propsBlock, "staticTessellationDisplacement", PrimitiveTessellateParams.displacementAmount);
-
-				BufferClass PrimitiveTessellateParamsBuf;
-				ShaderResourceSet tessellateShader;
-				ComputeSubmission tessellateCompute;
-
-				std::vector<RasterVertex> tmpVerts;
-				tmpVerts.resize(verts.size() * PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1]);
-				MaterialGeomMap[mat].emplace_back();
-				MaterialGeomMap[mat].back().Geometry (ptrToInstance, tmpVerts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), mat.isAlphaKeyed, newGroupId, gpuResideOnly, inpImmutable);
-
-				PrimitiveTessellateParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, nullptr, (unsigned int)sizeof(PrimitiveTessellateParams));
-
-				tessellateShader.Create("shaders/primitiveTessellate.comp.spv", "main");
-				tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 0, curGeom->getVertBuffer());
-				tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 1, MaterialGeomMap[mat].back().getVertBuffer());
-				tessellateShader.AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 2, mat.hgtRef->elem);
-				tessellateShader.AddResource(RESOURCE_UBO, COMPUTE, 0, 3, PrimitiveTessellateParamsBuf);
-				tessellateCompute.MakeDispatch(Instance, std::string("default"), tessellateShader, 1, 1, 1);
-
-				for (unsigned int i = 0; i != (unsigned int)staticTessPower; i++)
-				{
-					switch (i)
-					{
-					case 0:
-						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] = (unsigned int)verts.size() / 3;
-						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[2] = PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1];
-						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[3] = PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1] / 4;
-						break;
-					default:
-						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] *= 4;
-						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[2] /= 4;
-						PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[3] /= 4;
-						break;
-					}
-					PrimitiveTessellateParamsBuf.UploadSubData(0, &PrimitiveTessellateParams, sizeof(PrimitiveTessellateParams));
-					tessellateCompute.UpdateDispatchSize(Instance, std::string("default"), (unsigned int)ceil((double)PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] / (double)TessellateWorkGroup()), 1, 1);
-					tessellateCompute.Submit();
-				}
-
-				std::list<GeometryClass>::iterator it = MaterialGeomMap[mat].end();
-				--it;
-				it->SetMinMax(curGeom->getGeomMin() - vec3 (PrimitiveTessellateParams.displacementAmount), curGeom->getGeomMax() + vec3(PrimitiveTessellateParams.displacementAmount));
-				it->setRTBufferDirty();
-				--it;
-				MaterialGeomMap[mat].erase(it);
-			}
 		}
 
 		verts.clear();
 		vertAnimData.clear();
 	}
+
+	doStaticTessellation(ptrToInstance, gpuResideOnly, inpImmutable, viewPos);
 
 	isInit = true;
 }
@@ -968,6 +930,126 @@ MeshMaterial HIGHOMEGA::RENDER::GraphicsModel::getMaterialById(std::string & gro
 				return it->first;
 			}
 	return MeshMaterial();
+}
+
+void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrToInstance, bool gpuResideOnly, bool inpImmutable, vec3* viewPos)
+{
+	for (std::pair<const std::string, TessellateVerts>& curPair : tessellateGeom)
+	{
+		std::string curGroupId = curPair.first;
+		TessellateVerts& curTessVerts = curPair.second;
+		MeshMaterial& curMat = curTessVerts.mat;
+
+		if (!curTessVerts.curGeom) GeometryClass::getMinMax(curTessVerts.verts, curTessVerts.origMin, curTessVerts.origMax);
+		if (viewPos)
+		{
+			curTessVerts.cent = (curTessVerts.origMin + curTessVerts.origMax) * 0.5f;
+			curTessVerts.rad = (curTessVerts.origMax - curTessVerts.origMin).length() * 0.5f;
+			curTessVerts.targetTessellationPower = min (curTessVerts.maxTessellationPower, floor(curTessVerts.maxTessellationPower * (curTessVerts.rad / (*viewPos - curTessVerts.cent).length())));
+		}
+		else
+			curTessVerts.targetTessellationPower = curTessVerts.maxTessellationPower;
+
+		if (curTessVerts.curTessellationPower == curTessVerts.targetTessellationPower) continue;
+		curTessVerts.curTessellationPower = curTessVerts.targetTessellationPower;
+
+		if (curTessVerts.curTessellationPower == 0.0f)
+		{
+			MaterialGeomMap[curMat].emplace_back();
+			GeometryClass* addedGeom = &MaterialGeomMap[curMat].back();
+			addedGeom->Geometry(ptrToInstance, curTessVerts.verts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
+			addedGeom->setRTBufferDirty();
+			if (curTessVerts.curGeom)
+			{
+				curTessVerts.addedGeom = addedGeom;
+				curTessVerts.addedGeom->notifySubmissions = curTessVerts.curGeom->notifySubmissions;
+			}
+			else
+				curTessVerts.curGeom = addedGeom;
+			continue;
+		}
+
+		GeometryClass reconstructedBase(ptrToInstance, curTessVerts.verts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
+		unsigned int baseVertexCount = reconstructedBase.getVertBuffer().getSize() / sizeof(RasterVertex);
+
+		struct
+		{
+			unsigned int triCountTessFactorInputStrideOutputStride[4];
+			float displacementAmount;
+		} PrimitiveTessellateParams;
+		PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1] = (unsigned int)powf(4.0f, curTessVerts.curTessellationPower);
+		PrimitiveTessellateParams.displacementAmount = curTessVerts.tessellationDisplacement;
+
+		BufferClass PrimitiveTessellateParamsBuf;
+		ShaderResourceSet tessellateShader;
+		ComputeSubmission tessellateCompute;
+
+		std::vector<RasterVertex> tmpVerts;
+		tmpVerts.resize(baseVertexCount * PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1]);
+		MaterialGeomMap[curMat].emplace_back();
+		MaterialGeomMap[curMat].back().Geometry(ptrToInstance, tmpVerts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
+
+		PrimitiveTessellateParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, nullptr, (unsigned int)sizeof(PrimitiveTessellateParams));
+
+		tessellateShader.Create("shaders/primitiveTessellate.comp.spv", "main");
+		tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 0, reconstructedBase.getVertBuffer());
+		tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 1, MaterialGeomMap[curMat].back().getVertBuffer());
+		tessellateShader.AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 2, curMat.hgtRef->elem);
+		tessellateShader.AddResource(RESOURCE_UBO, COMPUTE, 0, 3, PrimitiveTessellateParamsBuf);
+		tessellateCompute.MakeDispatch(Instance, std::string("default"), tessellateShader, 1, 1, 1);
+
+		for (unsigned int i = 0; i != (unsigned int)curTessVerts.curTessellationPower; i++)
+		{
+			switch (i)
+			{
+			case 0:
+				PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] = baseVertexCount / 3;
+				PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[2] = PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1];
+				PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[3] = PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1] / 4;
+				break;
+			default:
+				PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] *= 4;
+				PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[2] /= 4;
+				PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[3] /= 4;
+				break;
+			}
+			PrimitiveTessellateParamsBuf.UploadSubData(0, &PrimitiveTessellateParams, sizeof(PrimitiveTessellateParams));
+			tessellateCompute.UpdateDispatchSize(Instance, std::string("default"), (unsigned int)ceil((double)PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[0] / (double)TessellateWorkGroup()), 1, 1);
+			tessellateCompute.Submit();
+		}
+
+		std::list<GeometryClass>::iterator addedGeomIt = MaterialGeomMap[curMat].end();
+		--addedGeomIt;
+		addedGeomIt->SetMinMax(curTessVerts.origMin - vec3(PrimitiveTessellateParams.displacementAmount), curTessVerts.origMax + vec3(PrimitiveTessellateParams.displacementAmount));
+		addedGeomIt->setRTBufferDirty();
+		if (curTessVerts.curGeom)
+		{
+			curTessVerts.addedGeom = &(*addedGeomIt);
+			curTessVerts.addedGeom->notifySubmissions = curTessVerts.curGeom->notifySubmissions;
+		}
+		else
+			curTessVerts.curGeom = &(*addedGeomIt);
+	}
+}
+
+void HIGHOMEGA::RENDER::GraphicsModel::removeOldTessellation()
+{
+	for (std::pair<const std::string, TessellateVerts>& curPair : tessellateGeom)
+	{
+		TessellateVerts& curTessVerts = curPair.second;
+		if (curTessVerts.addedGeom)
+		{
+			MeshMaterial& curMat = curTessVerts.mat;
+			for (std::list<GeometryClass>::iterator it = MaterialGeomMap[curMat].begin(); it != MaterialGeomMap[curMat].end(); it++)
+				if (curTessVerts.curGeom == &(*it))
+				{
+					MaterialGeomMap[curMat].erase(it);
+					curTessVerts.curGeom = curTessVerts.addedGeom;
+					curTessVerts.addedGeom = nullptr;
+					break;
+				}
+		}
+	}
 }
 
 void HIGHOMEGA::RENDER::GraphicsModel::removeGroupById(std::string & groupId)
