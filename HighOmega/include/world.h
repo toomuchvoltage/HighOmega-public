@@ -343,7 +343,6 @@ namespace HIGHOMEGA
 			struct zoneDesc
 			{
 				std::string name;
-				bool lowRes;
 				bool operator==(const zoneDesc& other) const;
 			};
 			class ZoneDescHash
@@ -353,9 +352,8 @@ namespace HIGHOMEGA
 			};
 			bool zoneStreamingActivated = false;
 			std::unordered_map<std::string, std::vector<std::string>> zoneReferences;
-			std::vector<zoneDesc> foundZonesCached;
+			std::vector<zoneDesc> foundZones;
 			std::vector<RigidBody *> rigidBodiesToAdd;
-			bool lastZonesSaved = false;
 			void getTileNums(vec3 inpPos, int & tileX, int & tileY, int & tileZ);
 			bool producingZones = false;
 			std::vector<WorldParamsClass> worldParamsLoaders = std::vector<WorldParamsClass>(HIGHOMEGA_ZONE_STREAMING_THREAD_COUNT);
@@ -377,7 +375,6 @@ namespace HIGHOMEGA
 			{
 				GraphicsModel *graphicsModel = nullptr;
 				RigidBody *rigidBody = nullptr;
-				bool loadedLowResModel = false;
 				unsigned long long itemId = 0ull;
 				unsigned long long plasteredId = 0ull;
 				unsigned long long particlesId = 0ull;
@@ -404,7 +401,7 @@ namespace HIGHOMEGA
 			void Create(std::string & inpZoneLocation, std::vector<GroupedRenderSubmission*> &&inpSubmissionList, std::function<SubmittedRenderItem(GroupedRenderSubmission*, GraphicsModel*)> inpPerSubmissionCall);
 			vec3 & getVisbileMax();
 			vec3 & getVisbileMin();
-			void Update(const vec3 & inpPos);
+			void Update(vec3 & inpPos, bool forceUpdate = false);
 			bool isInDrawRegion(vec3 & inEye, vec3 & objPos, float objRad);
 			void ClearContent();
 		};
@@ -529,6 +526,7 @@ namespace HIGHOMEGA
 		public:
 			static std::thread *booleanOpThread;
 			static std::atomic<bool> booleanOpThreadFinished;
+			std::mutex destructionMutex;
 			std::unordered_map <unsigned long long, RigidBodyItem> allItems;
 			static std::vector<AddParams> deferredAdds;
 

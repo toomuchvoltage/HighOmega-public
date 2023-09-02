@@ -2156,7 +2156,7 @@ GeometryClass::DataLayout::DataLayout()
 {
 }
 
-void HIGHOMEGA::GL::GeometryClass::getMinMax(std::vector<RasterVertex>& inpVertexData)
+void HIGHOMEGA::GL::GeometryClass::getMinMax(std::vector<RasterVertex>& inpVertexData, vec3& outMin, vec3& outMax)
 {
 	for (int i = 0; i != inpVertexData.size(); i++)
 	{
@@ -2165,16 +2165,16 @@ void HIGHOMEGA::GL::GeometryClass::getMinMax(std::vector<RasterVertex>& inpVerte
 		unpackRasterVertex(edge, vcol, uv, vnorm, inpVertexData[i]);
 		if (i == 0)
 		{
-			geomMin = geomMax = edge;
+			outMin = outMax = edge;
 		}
 		else
 		{
-			geomMin.x = min(geomMin.x, edge.x);
-			geomMin.y = min(geomMin.y, edge.y);
-			geomMin.z = min(geomMin.z, edge.z);
-			geomMax.x = max(geomMax.x, edge.x);
-			geomMax.y = max(geomMax.y, edge.y);
-			geomMax.z = max(geomMax.z, edge.z);
+			outMin.x = min(outMin.x, edge.x);
+			outMin.y = min(outMin.y, edge.y);
+			outMin.z = min(outMin.z, edge.z);
+			outMax.x = max(outMax.x, edge.x);
+			outMax.y = max(outMax.y, edge.y);
+			outMax.z = max(outMax.z, edge.z);
 		}
 	}
 }
@@ -2250,7 +2250,7 @@ void GeometryClass::Geometry(InstanceClass &inpInstance, std::vector<RasterVerte
 		vertBuffer.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, memUsage, inpInstance, (void *)inpVertexData.data(), vertexBufferSize);
 	}
 
-	getMinMax(inpVertexData);
+	getMinMax(inpVertexData, geomMin, geomMax);
 
 	vertBuffer.VERT_bindingDescriptions.resize(1);
 	vertBuffer.VERT_bindingDescriptions[0].binding = inpDataLayout.BindPoint;
@@ -2290,7 +2290,7 @@ void HIGHOMEGA::GL::GeometryClass::Update(std::vector<RasterVertex>& inpVertexDa
 
 	vertBuffer.UploadSubData(0, inpVertexData.data(), (unsigned int)inpVertexData.size() * sizeof(RasterVertex));
 
-	getMinMax(inpVertexData);
+	getMinMax(inpVertexData, geomMin, geomMax);
 
 	if (RTInstance::Enabled())
 	{
