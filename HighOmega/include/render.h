@@ -145,7 +145,7 @@ namespace HIGHOMEGA
 			void BumpClaims();
 			void ReduceClaims();
 			MeshMaterial();
-			MeshMaterial(HIGHOMEGA::MESH::DataBlock & propBlock, std::string belong, InstanceClass & ptrToInstance, bool loadLowRes = false);
+			MeshMaterial(HIGHOMEGA::MESH::DataBlock & propBlock, std::string belong, InstanceClass & ptrToInstance);
 		};
 		class MeshMaterialHash
 		{
@@ -243,6 +243,19 @@ namespace HIGHOMEGA
 
 			bool isInit = false;
 			std::unordered_map<GeometryClass *, std::vector<RasterVertex>> vertexCache;
+			struct TessellateVerts
+			{
+				float tessellationDisplacement;
+				float maxTessellationPower;
+				float curTessellationPower;
+				float targetTessellationPower;
+				vec3 origMin, origMax, cent;
+				float rad;
+				std::vector<RasterVertex> verts;
+				MeshMaterial mat;
+				GeometryClass* curGeom, *addedGeom;
+			};
+			std::unordered_map<std::string, TessellateVerts> tessellateGeom;
 
 			void RemovePast();
 			void GenerateGeom(std::vector<TriUV> & triList, std::vector <RasterVertex> & renderVertexVector);
@@ -260,10 +273,12 @@ namespace HIGHOMEGA
 			void Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction = [](int, DataGroup & inpGroup) -> bool {
 				float tmpFloat;
 				return !Mesh::getDataRowFloat(inpGroup, "PROPS", "cloth", tmpFloat);
-			}, mat4 *inpTransform = nullptr, bool gpuResideOnly = true, bool inpImmutable = true, bool loadAnimationData = false, bool loadLowRes = false);
+			}, mat4 *inpTransform = nullptr, bool gpuResideOnly = true, bool inpImmutable = true, bool loadAnimationData = false, vec3* viewPos = nullptr);
 			~GraphicsModel();
 			GeometryClass *getGeometryById(std::string & groupId);
 			MeshMaterial getMaterialById(std::string & groupId);
+			void doStaticTessellation(InstanceClass& ptrToInstance, bool gpuResideOnly = true, bool inpImmutable = true, vec3 *viewPos = nullptr);
+			void removeOldTessellation();
 			void removeGroupById(std::string & groupId);
 			void transformVertsSlow(mat4 & trans, std::string groupId = std::string(""), mat4 *localTrans = nullptr,
 				vec3 *iSectP1 = nullptr, vec3 *iSectP2 = nullptr, bool *lineHit = nullptr, vec3 *mulVCol = nullptr);

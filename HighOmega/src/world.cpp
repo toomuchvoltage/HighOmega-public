@@ -541,12 +541,12 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::getTileNums(vec3 inpPos, int & tileX,
 
 bool HIGHOMEGA::WORLD::ZoneStreamingClass::zoneDesc::operator==(const zoneDesc& other) const
 {
-	return this->lowRes == other.lowRes && this->name == other.name;
+	return this->name == other.name;
 }
 
 std::size_t HIGHOMEGA::WORLD::ZoneStreamingClass::ZoneDescHash::operator()(const zoneDesc& k) const
 {
-	return std::hash<std::string>{}(k.name + std::to_string(k.lowRes));
+	return std::hash<std::string>{}(k.name);
 }
 
 void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zoneStreamingPtr, unsigned int threadId)
@@ -555,21 +555,23 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 		mat4 tmpOrient;
 		tmpOrient.Ident();
 		vec3 tmpPos = vec3(0.0f);
-		for (unsigned int i = 0; i != zoneStreamingPtr->foundZonesCached.size(); i++)
+		for (unsigned int i = 0; i != zoneStreamingPtr->foundZones.size(); i++)
 		{
 			if (i % HIGHOMEGA_ZONE_STREAMING_THREAD_COUNT != threadId) continue;
-			zoneDesc& foundZone = zoneStreamingPtr->foundZonesCached[i];
+			zoneDesc& foundZone = zoneStreamingPtr->foundZones[i];
 			bool foundZoneLoaded;
 			{std::unique_lock<std::mutex> lk(zoneStreamingPtr->zone_producer_mutex);
 			foundZoneLoaded = (zoneStreamingPtr->loadedZones.find(foundZone) != zoneStreamingPtr->loadedZones.end()); }
-			if (foundZoneLoaded) continue;
+			if (foundZoneLoaded)
+			{
+				zoneStreamingPtr->loadedZones[foundZone].graphicsModel->doStaticTessellation(Instance, true, true, &zoneStreamingPtr->curPos);
+				continue;
+			}
 			Mesh* newMesh = new Mesh(zoneStreamingPtr->zoneLocation + foundZone.name + std::string(".3md"));
 			GraphicsModel* graphicsModel;
 			RigidBody* rigidBody;
 			std::string placedMesh;
-			bool loadingLowResModel = false;
 			if (newMesh->DataGroups.size() == 1 && Mesh::getDataRowString(newMesh->DataGroups[0], "PROPS", "placedMesh", placedMesh)) {
-				loadingLowResModel = foundZone.lowRes;
 				std::string placedMeshAssetLoc;
 				Mesh::getDataRowString(newMesh->DataGroups[0], "PROPS", "placedMeshAssetLoc", placedMeshAssetLoc);
 				mat4 placedMeshTransform;
@@ -582,28 +584,20 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 				placedMeshTransform.i[0][1] = axisY.x; placedMeshTransform.i[1][1] = axisY.y; placedMeshTransform.i[2][1] = axisY.z; placedMeshTransform.i[3][1] = 0.0f;
 				placedMeshTransform.i[0][2] = axisZ.x; placedMeshTransform.i[1][2] = axisZ.y; placedMeshTransform.i[2][2] = axisZ.z; placedMeshTransform.i[3][2] = 0.0f;
 				placedMeshTransform.i[3][3] = 0.0f;
-				std::string meshPrependString = foundZone.name + (loadingLowResModel ? ".lowres" : "") + ":";
+				std::string meshPrependString = foundZone.name + ":";
 				newMesh = new Mesh(placedMesh, &meshPrependString);
 				TransformMesh(*newMesh, placedMeshTransform);
 				graphicsModel = new GraphicsModel(*newMesh, placedMeshAssetLoc, Instance, [](int, DataGroup& inpGroup) -> bool {
 					float tmpFloat;
 					return !Mesh::getDataRowFloat(inpGroup, "PROPS", "cloth", tmpFloat);
-					}, nullptr, true, true, false, loadingLowResModel);
-				rigidBody = new RigidBody(*newMesh, placedMeshAssetLoc, tmpOrient, tmpPos, true, [](int, DataGroup& inpGroup) -> bool {
-						return true;
-				}, nullptr, loadingLowResModel);
+					}, nullptr, true, true, false, &zoneStreamingPtr->curPos);
+				rigidBody = new RigidBody(*newMesh, placedMeshAssetLoc, tmpOrient, tmpPos, true);
 			}
 			else {
-				zoneDesc otherPotentialZone = foundZone;
-				otherPotentialZone.lowRes = !foundZone.lowRes;
-				{std::unique_lock<std::mutex> lk(zoneStreamingPtr->zone_producer_mutex);
-				if (zoneStreamingPtr->loadedZones.find(otherPotentialZone) != zoneStreamingPtr->loadedZones.end())
-				{
-					zoneStreamingPtr->loadedZones[foundZone] = std::move(zoneStreamingPtr->loadedZones[otherPotentialZone]);
-					zoneStreamingPtr->loadedZones.erase(otherPotentialZone);
-					continue;
-				}}
-				graphicsModel = new GraphicsModel(*newMesh, zoneStreamingPtr->zoneLocation, Instance);
+				graphicsModel = new GraphicsModel(*newMesh, zoneStreamingPtr->zoneLocation, Instance, [](int, DataGroup& inpGroup) -> bool {
+					float tmpFloat;
+					return !Mesh::getDataRowFloat(inpGroup, "PROPS", "cloth", tmpFloat);
+					}, nullptr, true, true, false, &zoneStreamingPtr->curPos);
 				rigidBody = new RigidBody(*newMesh, zoneStreamingPtr->zoneLocation, tmpOrient, tmpPos, true);
 			}
 			std::function<SubmittedRenderItem(GroupedRenderSubmission*, GraphicsModel*)> passThroughSubmit =
@@ -618,7 +612,6 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 			unsigned long long worldParamsId = zoneStreamingPtr->worldParamsLoaders[threadId].Populate(*newMesh);
 			unsigned long long laddersId = zoneStreamingPtr->ladderSystemLoaders[threadId].Populate(*newMesh);
 			{std::unique_lock<std::mutex> lk(zoneStreamingPtr->zone_producer_mutex);
-			zoneStreamingPtr->loadedZones[foundZone].loadedLowResModel = loadingLowResModel;
 			zoneStreamingPtr->loadedZones[foundZone].worldParamsId = worldParamsId;
 			zoneStreamingPtr->loadedZones[foundZone].graphicsModel = graphicsModel;
 			zoneStreamingPtr->loadedZones[foundZone].rigidBody = rigidBody;
@@ -654,13 +647,13 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 
 			std::vector<SubmittedRenderItem> sri;
 			std::vector<std::string> cacheNames;
-			for (unsigned int i = 0; i != zoneStreamingPtr->foundZonesCached.size(); i++)
+			for (unsigned int i = 0; i != zoneStreamingPtr->foundZones.size(); i++)
 			{
-				zoneDesc& foundZone = zoneStreamingPtr->foundZonesCached[i];
+				zoneDesc& foundZone = zoneStreamingPtr->foundZones[i];
 				SubmittedRenderItem curSri;
 				curSri.item = zoneStreamingPtr->loadedZones[foundZone].graphicsModel;
 				sri.push_back(curSri);
-				cacheNames.push_back(zoneStreamingPtr->zoneLocation + foundZone.name + (zoneStreamingPtr->loadedZones[foundZone].loadedLowResModel ? ".lowres" : "") + ".matdf");
+				cacheNames.push_back(zoneStreamingPtr->zoneLocation + foundZone.name + ".matdf");
 			}
 
 			GraphicsModel::UpdateSDFs(sri, false, cacheNames);
@@ -747,7 +740,8 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Create(std::string & inpZoneLocation,
 			zoneReferences[zoneName].push_back(zoneRefBlock->rows[i][2 + j].svalRef());
 	}
 
-	Update(vec3(0.0f));
+	curPos = vec3(0.0f);
+	Update(curPos, true);
 }
 
 vec3 & HIGHOMEGA::WORLD::ZoneStreamingClass::getVisbileMax()
@@ -760,17 +754,17 @@ vec3 & HIGHOMEGA::WORLD::ZoneStreamingClass::getVisbileMin()
 	return visibleMin;
 }
 
-void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
+void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(vec3 & inpPos, bool forceUpdate)
 {
 	if (!zoneStreamingActivated) return;
 
-	if (!producingZones && noZonesProduced())
+	if (!producingZones && noZonesProduced() && ((inpPos - curPos).length() > 100.0f || forceUpdate) )
 	{
 		int curTileX, curTileY, curTileZ;
 		curPos = inpPos;
 		getTileNums(curPos, curTileX, curTileY, curTileZ);
 
-		std::vector<zoneDesc> foundZones;
+		foundZones.clear();
 
 		for (int i = -tilesPerDrawRegionEdge(); i != tilesPerDrawRegionEdge() + 1; i++)
 			for (int j = -tilesPerDrawRegionEdge(); j != tilesPerDrawRegionEdge() + 1; j++)
@@ -781,7 +775,6 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 					checkZoneName += std::to_string(curTileY + j);
 					checkZoneName += std::string(".");
 					checkZoneName += std::to_string(curTileZ + k);
-					bool lowRes = false;
 					if (zoneReferences.find(checkZoneName) != zoneReferences.end())
 						for (unsigned int l = 0; l != zoneReferences[checkZoneName].size(); l++)
 						{
@@ -793,16 +786,9 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 							{
 								foundZones.emplace_back();
 								foundZones.back().name = zoneReferences[checkZoneName][l];
-								foundZones.back().lowRes = lowRes;
 							}
-							else
-								if (!lowRes) it->lowRes = lowRes;
 						}
 				}
-
-		if (lastZonesSaved && foundZones == foundZonesCached) return;
-		foundZonesCached = foundZones;
-		lastZonesSaved = true;
 	}
 
 	if (!producingZones)
@@ -820,17 +806,18 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 		}
 		else return;
 	}
-	if (allZonesProduced() && !PhysicalItemClass::booleanOpThread) // Do not evict, mid destruction
+	if (allZonesProduced() && physicalItemsCollection.destructionMutex.try_lock()) // Do not evict, mid destruction
 	{
 		waitOnZoneProduction();
 		std::vector<zoneDesc> zonesToRemove;
 		for (std::pair <const zoneDesc, zone> & curZone : loadedZones)
 		{
 			bool curZoneApproved = false;
-			for (zoneDesc & foundZone : foundZonesCached)
+			for (zoneDesc & foundZone : foundZones)
 				if (curZone.first == foundZone)
 				{
 					curZoneApproved = true;
+					loadedZones[curZone.first].graphicsModel->removeOldTessellation();
 					break;
 				}
 			if (!curZoneApproved)
@@ -912,6 +899,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(const vec3 & inpPos)
 
 		producingZones = false;
 		setAllZonesNotProduced();
+		physicalItemsCollection.destructionMutex.unlock();
 	}
 }
 
@@ -939,9 +927,8 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::ClearContent()
 {
 	zoneStreamingActivated = false;
 	zoneReferences.clear();
-	foundZonesCached.clear();
+	foundZones.clear();
 	rigidBodiesToAdd.clear();
-	lastZonesSaved = false;
 	producedZonesOnce = false;
 
 	waitOnZoneProduction();
@@ -1465,7 +1452,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::CutOut(RigidBody * inpRigidBody, std::
 {
 	// Destruction happens completely async...
 
-	if (booleanOpThread) return;
+	if (booleanOpThread || !destructionMutex.try_lock()) return;
 
 	subListForDebris = subList;
 	perSubmissionCallForDebris = perSubmissionCall;
@@ -1477,7 +1464,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::Shatter(RigidBody * inpRigidBody, std:
 {
 	// Destruction happens completely async...
 
-	if (booleanOpThread) return;
+	if (booleanOpThread || !destructionMutex.try_lock()) return;
 
 	subListForDebris = subList;
 	perSubmissionCallForDebris = perSubmissionCall;
@@ -1830,6 +1817,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::Update(std::function <bool(vec3 &, vec
 		}
 		deferredAdds.clear();
 		CommonSharedMutex.lock_shared();
+		destructionMutex.unlock();
 	}
 	// Build SDF leaves for recently added debris/rigid bodies
 	if (recentlyAddedRigidModels.size() > 0)
