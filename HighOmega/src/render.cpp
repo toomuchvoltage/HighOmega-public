@@ -950,7 +950,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrTo
 		else
 			curTessVerts.targetTessellationPower = curTessVerts.maxTessellationPower;
 
-		if (curTessVerts.curTessellationPower == curTessVerts.targetTessellationPower) continue;
+		if (curTessVerts.curTessellationPower == curTessVerts.targetTessellationPower && curTessVerts.curGeom) continue;
 		curTessVerts.curTessellationPower = curTessVerts.targetTessellationPower;
 
 		if (curTessVerts.curTessellationPower == 0.0f)
