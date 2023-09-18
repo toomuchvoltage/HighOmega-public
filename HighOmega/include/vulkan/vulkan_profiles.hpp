@@ -1,5 +1,7 @@
-/**
- * Copyright (c) 2021-2023 LunarG, Inc.
+
+/*
+ * Copyright (C) 2021-2023 Valve Corporation
+ * Copyright (C) 2021-2023 LunarG, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License")
  * you may not use this file except in compliance with the License.
@@ -13,7 +15,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * DO NOT EDIT: This file is generated.
+ * This file is ***GENERATED***.  Do Not Edit.
+ * See scripts/gen_profiles_solution.py for modifications.
  */
 
 #ifndef VULKAN_PROFILES_HPP_
@@ -6425,11 +6428,7 @@ static const VpPropertyDesc propertyDesc = {
                     s->maxPerStageDescriptorUpdateAfterBindUniformBuffers = 15;
                     s->maxPerStageUpdateAfterBindResources = 159;
                     s->maxUpdateAfterBindDescriptorsInAllPools = 1048576;
-                    s->quadDivergentImplicitLod = VK_TRUE;
                     s->robustBufferAccessUpdateAfterBind = VK_TRUE;
-                    s->shaderInputAttachmentArrayNonUniformIndexingNative = VK_TRUE;
-                    s->shaderSampledImageArrayNonUniformIndexingNative = VK_TRUE;
-                    s->shaderStorageImageArrayNonUniformIndexingNative = VK_TRUE;
                 } break;
                 case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT: {
                     VkPhysicalDeviceInlineUniformBlockPropertiesEXT* s = static_cast<VkPhysicalDeviceInlineUniformBlockPropertiesEXT*>(static_cast<void*>(p));
@@ -6617,11 +6616,7 @@ static const VpPropertyDesc propertyDesc = {
                     ret = ret && (prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxPerStageDescriptorUpdateAfterBindUniformBuffers >= 15); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxPerStageDescriptorUpdateAfterBindUniformBuffers >= 15), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::maxPerStageDescriptorUpdateAfterBindUniformBuffers >= 15");
                     ret = ret && (prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxPerStageUpdateAfterBindResources >= 159); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxPerStageUpdateAfterBindResources >= 159), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::maxPerStageUpdateAfterBindResources >= 159");
                     ret = ret && (prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxUpdateAfterBindDescriptorsInAllPools >= 1048576); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxUpdateAfterBindDescriptorsInAllPools >= 1048576), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::maxUpdateAfterBindDescriptorsInAllPools >= 1048576");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->quadDivergentImplicitLod, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->quadDivergentImplicitLod, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::quadDivergentImplicitLod contains VK_TRUE");
                     ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->robustBufferAccessUpdateAfterBind, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->robustBufferAccessUpdateAfterBind, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::robustBufferAccessUpdateAfterBind contains VK_TRUE");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderInputAttachmentArrayNonUniformIndexingNative, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderInputAttachmentArrayNonUniformIndexingNative, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::shaderInputAttachmentArrayNonUniformIndexingNative contains VK_TRUE");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderSampledImageArrayNonUniformIndexingNative, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderSampledImageArrayNonUniformIndexingNative, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::shaderSampledImageArrayNonUniformIndexingNative contains VK_TRUE");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderStorageImageArrayNonUniformIndexingNative, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderStorageImageArrayNonUniformIndexingNative, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::shaderStorageImageArrayNonUniformIndexingNative contains VK_TRUE");
                 } break;
                 case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT: {
                     VkPhysicalDeviceInlineUniformBlockPropertiesEXT* prettify_VkPhysicalDeviceInlineUniformBlockPropertiesEXT = static_cast<VkPhysicalDeviceInlineUniformBlockPropertiesEXT*>(static_cast<void*>(p));
@@ -9290,7 +9285,7 @@ static const VpPropertyDesc propertyDesc = {
                     s->properties.limits.framebufferDepthSampleCounts = (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT);
                     s->properties.limits.framebufferNoAttachmentsSampleCounts = (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT);
                     s->properties.limits.framebufferStencilSampleCounts = (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT);
-                    s->properties.limits.lineWidthGranularity = 0.125f;
+                    s->properties.limits.lineWidthGranularity = 1.0f;
                     s->properties.limits.lineWidthRange[0] = 1;
                     s->properties.limits.lineWidthRange[1] = 1;
                     s->properties.limits.maxBoundDescriptorSets = 8;
@@ -9404,7 +9399,7 @@ static const VpPropertyDesc propertyDesc = {
                     s->maxPerSetDescriptors = 700;
                     s->subgroupSize = 1;
                     s->subgroupSupportedOperations = (VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT);
-                    s->subgroupSupportedStages = (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_ALL_GRAPHICS);
+                    s->subgroupSupportedStages = (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT);
                 } break;
                 case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES: {
                     VkPhysicalDeviceVulkan12Properties* s = static_cast<VkPhysicalDeviceVulkan12Properties*>(static_cast<void*>(p));
@@ -9447,8 +9442,8 @@ static const VpPropertyDesc propertyDesc = {
                     ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.framebufferDepthSampleCounts, (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT))); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.framebufferDepthSampleCounts, (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT))), "Unsupported properties condition: VkPhysicalDeviceProperties2KHR::properties.limits.framebufferDepthSampleCounts contains (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT)");
                     ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.framebufferNoAttachmentsSampleCounts, (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT))); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.framebufferNoAttachmentsSampleCounts, (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT))), "Unsupported properties condition: VkPhysicalDeviceProperties2KHR::properties.limits.framebufferNoAttachmentsSampleCounts contains (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT)");
                     ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.framebufferStencilSampleCounts, (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT))); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.framebufferStencilSampleCounts, (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT))), "Unsupported properties condition: VkPhysicalDeviceProperties2KHR::properties.limits.framebufferStencilSampleCounts contains (VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT)");
-                    ret = ret && (prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity <= 0.125); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity <= 0.125), "Unsupported properties condition: VkPhysicalDeviceProperties2KHR::properties.limits.lineWidthGranularity <= 0.125");
-                    ret = ret && (isMultiple(0.125, prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity)); VP_DEBUG_COND_MSG(!(isMultiple(0.125, prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity)), "Unsupported properties condition: isMultiple(0.125, prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity)");
+                    ret = ret && (prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity <= 1.0); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity <= 1.0), "Unsupported properties condition: VkPhysicalDeviceProperties2KHR::properties.limits.lineWidthGranularity <= 1.0");
+                    ret = ret && (isMultiple(1.0, prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity)); VP_DEBUG_COND_MSG(!(isMultiple(1.0, prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity)), "Unsupported properties condition: isMultiple(1.0, prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthGranularity)");
                     ret = ret && (prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthRange[0] <= 1); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthRange[0] <= 1), "Unsupported properties condition: VkPhysicalDeviceProperties2KHR::properties.limits.lineWidthRange[0] <= 1");
                     ret = ret && (prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthRange[1] >= 1); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.lineWidthRange[1] >= 1), "Unsupported properties condition: VkPhysicalDeviceProperties2KHR::properties.limits.lineWidthRange[1] >= 1");
                     ret = ret && (prettify_VkPhysicalDeviceProperties2KHR->properties.limits.maxBoundDescriptorSets >= 8); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceProperties2KHR->properties.limits.maxBoundDescriptorSets >= 8), "Unsupported properties condition: VkPhysicalDeviceProperties2KHR::properties.limits.maxBoundDescriptorSets >= 8");
@@ -9571,7 +9566,7 @@ static const VpPropertyDesc propertyDesc = {
                     ret = ret && (prettify_VkPhysicalDeviceVulkan11Properties->subgroupSize >= 1); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceVulkan11Properties->subgroupSize >= 1), "Unsupported properties condition: VkPhysicalDeviceVulkan11Properties::subgroupSize >= 1");
                     ret = ret && ((prettify_VkPhysicalDeviceVulkan11Properties->subgroupSize & (prettify_VkPhysicalDeviceVulkan11Properties->subgroupSize - 1)) == 0); VP_DEBUG_COND_MSG(!((prettify_VkPhysicalDeviceVulkan11Properties->subgroupSize & (prettify_VkPhysicalDeviceVulkan11Properties->subgroupSize - 1)) == 0), "Unsupported properties condition: (prettify_VkPhysicalDeviceVulkan11Properties->subgroupSize & (prettify_VkPhysicalDeviceVulkan11Properties->subgroupSize - 1)) == 0");
                     ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceVulkan11Properties->subgroupSupportedOperations, (VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT))); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceVulkan11Properties->subgroupSupportedOperations, (VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT))), "Unsupported properties condition: VkPhysicalDeviceVulkan11Properties::subgroupSupportedOperations contains (VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT)");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceVulkan11Properties->subgroupSupportedStages, (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_ALL_GRAPHICS))); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceVulkan11Properties->subgroupSupportedStages, (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_ALL_GRAPHICS))), "Unsupported properties condition: VkPhysicalDeviceVulkan11Properties::subgroupSupportedStages contains (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_ALL_GRAPHICS)");
+                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceVulkan11Properties->subgroupSupportedStages, (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT))); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceVulkan11Properties->subgroupSupportedStages, (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT))), "Unsupported properties condition: VkPhysicalDeviceVulkan11Properties::subgroupSupportedStages contains (VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT)");
                 } break;
                 case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES: {
                     VkPhysicalDeviceVulkan12Properties* prettify_VkPhysicalDeviceVulkan12Properties = static_cast<VkPhysicalDeviceVulkan12Properties*>(static_cast<void*>(p));
@@ -12167,11 +12162,7 @@ static const VpPropertyDesc propertyDesc = {
                     s->maxPerStageDescriptorUpdateAfterBindUniformBuffers = 15;
                     s->maxPerStageUpdateAfterBindResources = 159;
                     s->maxUpdateAfterBindDescriptorsInAllPools = 1048576;
-                    s->quadDivergentImplicitLod = VK_TRUE;
                     s->robustBufferAccessUpdateAfterBind = VK_TRUE;
-                    s->shaderInputAttachmentArrayNonUniformIndexingNative = VK_TRUE;
-                    s->shaderSampledImageArrayNonUniformIndexingNative = VK_TRUE;
-                    s->shaderStorageImageArrayNonUniformIndexingNative = VK_TRUE;
                 } break;
                 case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT: {
                     VkPhysicalDeviceInlineUniformBlockPropertiesEXT* s = static_cast<VkPhysicalDeviceInlineUniformBlockPropertiesEXT*>(static_cast<void*>(p));
@@ -12363,11 +12354,7 @@ static const VpPropertyDesc propertyDesc = {
                     ret = ret && (prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxPerStageDescriptorUpdateAfterBindUniformBuffers >= 15); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxPerStageDescriptorUpdateAfterBindUniformBuffers >= 15), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::maxPerStageDescriptorUpdateAfterBindUniformBuffers >= 15");
                     ret = ret && (prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxPerStageUpdateAfterBindResources >= 159); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxPerStageUpdateAfterBindResources >= 159), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::maxPerStageUpdateAfterBindResources >= 159");
                     ret = ret && (prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxUpdateAfterBindDescriptorsInAllPools >= 1048576); VP_DEBUG_COND_MSG(!(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->maxUpdateAfterBindDescriptorsInAllPools >= 1048576), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::maxUpdateAfterBindDescriptorsInAllPools >= 1048576");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->quadDivergentImplicitLod, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->quadDivergentImplicitLod, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::quadDivergentImplicitLod contains VK_TRUE");
                     ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->robustBufferAccessUpdateAfterBind, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->robustBufferAccessUpdateAfterBind, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::robustBufferAccessUpdateAfterBind contains VK_TRUE");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderInputAttachmentArrayNonUniformIndexingNative, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderInputAttachmentArrayNonUniformIndexingNative, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::shaderInputAttachmentArrayNonUniformIndexingNative contains VK_TRUE");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderSampledImageArrayNonUniformIndexingNative, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderSampledImageArrayNonUniformIndexingNative, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::shaderSampledImageArrayNonUniformIndexingNative contains VK_TRUE");
-                    ret = ret && (vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderStorageImageArrayNonUniformIndexingNative, VK_TRUE)); VP_DEBUG_COND_MSG(!(vpCheckFlags(prettify_VkPhysicalDeviceDescriptorIndexingPropertiesEXT->shaderStorageImageArrayNonUniformIndexingNative, VK_TRUE)), "Unsupported properties condition: VkPhysicalDeviceDescriptorIndexingPropertiesEXT::shaderStorageImageArrayNonUniformIndexingNative contains VK_TRUE");
                 } break;
                 case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_PROPERTIES_EXT: {
                     VkPhysicalDeviceInlineUniformBlockPropertiesEXT* prettify_VkPhysicalDeviceInlineUniformBlockPropertiesEXT = static_cast<VkPhysicalDeviceInlineUniformBlockPropertiesEXT*>(static_cast<void*>(p));
