@@ -3242,7 +3242,7 @@ void HIGHOMEGA::GL::ImageClass::RemovePast()
 			subAllocCallbacks.memoryMapFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::MapMemoryCWrapper;
 			subAllocCallbacks.memoryUnmapFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::UnmapMemoryCWrapper;
 			subAllocCallbacks.freeMemFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::FreeMemCWrapper;
-			ktxVulkanTexture_Destruct_WithPotentialSuballocator(&ktxVulkanTexture, ktx2VDIRef->elem.ktxVDI.device, nullptr, &subAllocCallbacks);
+			ktxVulkanTexture_Destruct_WithSuballocator(&ktxVulkanTexture, ktx2VDIRef->elem.ktxVDI.device, nullptr, &subAllocCallbacks);
 			{std::unique_lock <std::mutex> lk(ktx2VDIPools.mtx);
 			ktx2VDIPools.dir[ktx2VDIRef->keyRef].elemCount--;
 			if (ktx2VDIPools.dir[ktx2VDIRef->keyRef].elemCount == 0)
@@ -3573,7 +3573,7 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 		subAllocCallbacks.memoryMapFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::MapMemoryCWrapper;
 		subAllocCallbacks.memoryUnmapFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::UnmapMemoryCWrapper;
 		subAllocCallbacks.freeMemFuncPtr = HIGHOMEGA::GL::MEMORY_MANAGER::LIBKTX2::FreeMemCWrapper;
-		result = ktxTexture_VkUploadEx_WithPotentialSuballocator((ktxTexture*)kTexture, &ktx2VDIRef->elem.ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, &subAllocCallbacks);
+		result = ktxTexture_VkUploadEx_WithSuballocator((ktxTexture*)kTexture, &ktx2VDIRef->elem.ktxVDI, &ktxVulkanTexture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, &subAllocCallbacks);
 		if (result != KTX_SUCCESS) { RemovePast(); throw std::runtime_error("Error creating ktxVulkanTexture from ktx file"); }}
 		ktxTexture_Destroy((ktxTexture*)kTexture);
 
