@@ -145,7 +145,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <Lib>
-      <AdditionalDependencies>openal\64\openal32.lib;sdl\64\SDL2.lib;sdl\64\SDL2main.lib;vulkan\64\vulkan-1.lib;vulkan\64\VkLayer_utils.lib;libktx\64\ktx.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>openal\64\openal32.lib;sdl\64\SDL2.lib;sdl\64\SDL2main.lib;vulkan\64\vulkan-1.lib;libktx\64\ktx.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>libs;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Lib>
   </ItemDefinitionGroup>
