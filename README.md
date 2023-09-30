@@ -1,3 +1,5 @@
+# This branch is now archived as CS:GO has been overwritten by CS2
+
 # SauRay<sup>TM</sup> for CS:GO (via IPC through SourceMod)
 
 This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](https://sauray.tech) for [our CS:GO SourceMod plugin](https://github.com/toomuchvoltage/SauRay/tree/master/CSGO). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
