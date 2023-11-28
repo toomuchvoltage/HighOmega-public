@@ -955,17 +955,20 @@ void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrTo
 
 		if (curTessVerts.curTessellationPower == 0.0f)
 		{
-			MaterialGeomMap[curMat].emplace_back();
-			GeometryClass* addedGeom = &MaterialGeomMap[curMat].back();
-			addedGeom->Geometry(ptrToInstance, curTessVerts.verts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
-			addedGeom->setRTBufferDirty();
 			if (curTessVerts.curGeom)
 			{
-				curTessVerts.addedGeom = addedGeom;
+				curTessVerts.addedGeom = new GeometryClass(ptrToInstance, curTessVerts.verts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
+				curTessVerts.addedGeom->setRTBufferDirty();
 				curTessVerts.addedGeom->notifySubmissions = curTessVerts.curGeom->notifySubmissions;
 			}
 			else
+			{
+				MaterialGeomMap[curMat].emplace_back();
+				GeometryClass* addedGeom = &MaterialGeomMap[curMat].back();
+				addedGeom->Geometry(ptrToInstance, curTessVerts.verts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
+				addedGeom->setRTBufferDirty();
 				curTessVerts.curGeom = addedGeom;
+			}
 			continue;
 		}
 
@@ -986,14 +989,13 @@ void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrTo
 
 		std::vector<RasterVertex> tmpVerts;
 		tmpVerts.resize(baseVertexCount * PrimitiveTessellateParams.triCountTessFactorInputStrideOutputStride[1]);
-		MaterialGeomMap[curMat].emplace_back();
-		MaterialGeomMap[curMat].back().Geometry(ptrToInstance, tmpVerts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
+		GeometryClass* newGeom = new GeometryClass(ptrToInstance, tmpVerts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
 
 		PrimitiveTessellateParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, nullptr, (unsigned int)sizeof(PrimitiveTessellateParams));
 
 		tessellateShader.Create("shaders/primitiveTessellate.comp.spv", "main");
 		tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 0, reconstructedBase.getVertBuffer());
-		tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 1, MaterialGeomMap[curMat].back().getVertBuffer());
+		tessellateShader.AddResource(RESOURCE_SSBO, COMPUTE, 0, 1, newGeom->getVertBuffer());
 		tessellateShader.AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 2, curMat.hgtRef->elem);
 		tessellateShader.AddResource(RESOURCE_UBO, COMPUTE, 0, 3, PrimitiveTessellateParamsBuf);
 		tessellateCompute.MakeDispatch(Instance, std::string("default"), tessellateShader, 1, 1, 1);
@@ -1018,17 +1020,20 @@ void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrTo
 			tessellateCompute.Submit();
 		}
 
-		std::list<GeometryClass>::iterator addedGeomIt = MaterialGeomMap[curMat].end();
-		--addedGeomIt;
-		addedGeomIt->SetMinMax(curTessVerts.origMin - vec3(PrimitiveTessellateParams.displacementAmount), curTessVerts.origMax + vec3(PrimitiveTessellateParams.displacementAmount));
-		addedGeomIt->setRTBufferDirty();
+		newGeom->SetMinMax(curTessVerts.origMin - vec3(PrimitiveTessellateParams.displacementAmount), curTessVerts.origMax + vec3(PrimitiveTessellateParams.displacementAmount));
+		newGeom->setRTBufferDirty();
 		if (curTessVerts.curGeom)
 		{
-			curTessVerts.addedGeom = &(*addedGeomIt);
+			curTessVerts.addedGeom = newGeom;
 			curTessVerts.addedGeom->notifySubmissions = curTessVerts.curGeom->notifySubmissions;
 		}
 		else
-			curTessVerts.curGeom = &(*addedGeomIt);
+		{
+			MaterialGeomMap[curMat].emplace_back();
+			curTessVerts.curGeom = &(MaterialGeomMap[curMat].back());
+			MaterialGeomMap[curMat].back() = std::move(*newGeom);
+			operator delete(newGeom);
+		}
 	}
 }
 
@@ -1044,7 +1049,10 @@ void HIGHOMEGA::RENDER::GraphicsModel::removeOldTessellation()
 				if (curTessVerts.curGeom == &(*it))
 				{
 					MaterialGeomMap[curMat].erase(it);
-					curTessVerts.curGeom = curTessVerts.addedGeom;
+					MaterialGeomMap[curMat].emplace_back();
+					curTessVerts.curGeom = &MaterialGeomMap[curMat].back();
+					*curTessVerts.curGeom = std::move(*curTessVerts.addedGeom);
+					operator delete(curTessVerts.addedGeom);
 					curTessVerts.addedGeom = nullptr;
 					break;
 				}
