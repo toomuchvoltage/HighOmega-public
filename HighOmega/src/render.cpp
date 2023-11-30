@@ -1793,7 +1793,6 @@ unsigned long long HIGHOMEGA::RENDER::GroupedSDFBVHSubmission::SceneID()
 		allSDFBVHImages.push_back(curSubmittedItem.item->sdf);
 		leafTransformInfo.emplace_back();
 		UnpackMat4(curSubmittedItem.item->modelTransMat, leafTransformInfo.back().transMat);
-		UnpackMat4(curSubmittedItem.item->modelTransMatInv, leafTransformInfo.back().invTransMat);
 		leafTransformInfo.back().bMin[0] = untransformedModMin.x;
 		leafTransformInfo.back().bMin[1] = untransformedModMin.y;
 		leafTransformInfo.back().bMin[2] = untransformedModMin.z;

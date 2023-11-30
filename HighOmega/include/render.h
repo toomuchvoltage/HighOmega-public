@@ -412,7 +412,6 @@ namespace HIGHOMEGA
 			struct singleLeafTransform
 			{
 				float transMat[16];
-				float invTransMat[16];
 				float bMin[4];
 				float bMax[4];
 			};
