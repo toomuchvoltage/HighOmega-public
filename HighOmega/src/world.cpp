@@ -577,12 +577,6 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 				mat4 placedMeshTransform;
 				Mesh::getDataRowMat4(newMesh->DataGroups[0], "PROPS", "placedMeshTransform", placedMeshTransform);
 				delete newMesh;
-				vec3 axisX = vec3(placedMeshTransform.i[0][0], placedMeshTransform.i[1][0], placedMeshTransform.i[2][0]).normalized();
-				vec3 axisY = vec3(placedMeshTransform.i[0][1], placedMeshTransform.i[1][1], placedMeshTransform.i[2][1]).normalized();
-				vec3 axisZ = vec3(placedMeshTransform.i[0][2], placedMeshTransform.i[1][2], placedMeshTransform.i[2][2]).normalized();
-				placedMeshTransform.i[0][0] = axisX.x; placedMeshTransform.i[1][0] = axisX.y; placedMeshTransform.i[2][0] = axisX.z; placedMeshTransform.i[3][0] = 0.0f;
-				placedMeshTransform.i[0][1] = axisY.x; placedMeshTransform.i[1][1] = axisY.y; placedMeshTransform.i[2][1] = axisY.z; placedMeshTransform.i[3][1] = 0.0f;
-				placedMeshTransform.i[0][2] = axisZ.x; placedMeshTransform.i[1][2] = axisZ.y; placedMeshTransform.i[2][2] = axisZ.z; placedMeshTransform.i[3][2] = 0.0f;
 				placedMeshTransform.i[3][3] = 0.0f;
 				std::string meshPrependString = foundZone.name + ":";
 				newMesh = new Mesh(placedMesh, &meshPrependString);
