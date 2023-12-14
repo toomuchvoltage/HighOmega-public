@@ -1032,6 +1032,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrTo
 			MaterialGeomMap[curMat].emplace_back();
 			curTessVerts.curGeom = &(MaterialGeomMap[curMat].back());
 			MaterialGeomMap[curMat].back() = std::move(*newGeom);
+			MaterialGeomMap[curMat].back().getRTGeom().completeVertexBufferRef = &MaterialGeomMap[curMat].back().getVertBuffer(); // Vert buffer has been moved, need to update reference...
 			operator delete(newGeom);
 		}
 	}
@@ -1052,6 +1053,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::removeOldTessellation()
 					MaterialGeomMap[curMat].emplace_back();
 					curTessVerts.curGeom = &MaterialGeomMap[curMat].back();
 					*curTessVerts.curGeom = std::move(*curTessVerts.addedGeom);
+					curTessVerts.curGeom->getRTGeom().completeVertexBufferRef = &curTessVerts.curGeom->getVertBuffer(); // Vert buffer has been moved, need to update reference...
 					operator delete(curTessVerts.addedGeom);
 					curTessVerts.addedGeom = nullptr;
 					break;
