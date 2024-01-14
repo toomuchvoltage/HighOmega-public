@@ -273,11 +273,11 @@ namespace HIGHOMEGA
 			void Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction = [](int, DataGroup & inpGroup) -> bool {
 				float tmpFloat;
 				return !Mesh::getDataRowFloat(inpGroup, "PROPS", "cloth", tmpFloat);
-			}, mat4 *inpTransform = nullptr, bool gpuResideOnly = true, bool inpImmutable = true, bool loadAnimationData = false, vec3* viewPos = nullptr);
+			}, mat4 *inpTransform = nullptr, bool gpuResideOnly = true, bool inpImmutable = true, bool loadAnimationData = false, vec3* viewPos = nullptr, float* fullBodyHeight = nullptr);
 			~GraphicsModel();
 			GeometryClass *getGeometryById(std::string & groupId);
 			MeshMaterial getMaterialById(std::string & groupId);
-			void doStaticTessellation(InstanceClass& ptrToInstance, bool gpuResideOnly = true, bool inpImmutable = true, vec3 *viewPos = nullptr);
+			void doStaticTessellation(InstanceClass& ptrToInstance, bool gpuResideOnly = true, bool inpImmutable = true, vec3 *viewPos = nullptr, float* fullBodyHeight = nullptr, bool firstRun = true);
 			void removeOldTessellation();
 			void removeGroupById(std::string & groupId);
 			void transformVertsSlow(mat4 & trans, std::string groupId = std::string(""), mat4 *localTrans = nullptr,
@@ -554,7 +554,9 @@ namespace HIGHOMEGA
 				return true;
 			});
 			static bool postProcessOnlyFilter(MeshMaterial & curMat);
+			static bool blendOnlyFilter(MeshMaterial & curMat);
 			static bool everythingFilter(MeshMaterial & curMat);
+			static bool noBlendOrPostProcessFilter(MeshMaterial& curMat);
 			void Remove(SubmittedRenderItem & inpSubmittedRenderItem);
 			void SetFrameBuffer(FramebufferClass & inpFrameBuffer);
 			void SetShader(std::string inpName, ShaderResourceSet & inpShader);
@@ -873,8 +875,17 @@ namespace HIGHOMEGA
 				void RenderDistantGeom();
 				void Render(WorldParamsClass & WorldParams, GroupedTraceSubmission & rtSubmission);
 			};
+			class BlueNoiseHolderClass
+			{
+			protected:
+				static ImageClass* blueNoise;
+				static unsigned int blueNoiseClaims;
 
-			class PathTraceClass : public OffScreenPassClass, public RTPass
+			public:
+				BlueNoiseHolderClass();
+				~BlueNoiseHolderClass();
+			};
+			class PathTraceClass : public OffScreenPassClass, public RTPass, public BlueNoiseHolderClass
 			{
 			private:
 				GatherResolveClass *GatherPassRef;
@@ -928,16 +939,6 @@ namespace HIGHOMEGA
 				void Create(PathTraceClass & PathTrace);
 				void Submit();
 			};
-			class BlueNoiseHolderClass
-			{
-			protected:
-				static ImageClass *blueNoise;
-				static unsigned int blueNoiseClaims;
-
-			public:
-				BlueNoiseHolderClass();
-				~BlueNoiseHolderClass();
-			};
 			class SaurayTraceClass : public OffScreenPassClass, public RTPass, public BlueNoiseHolderClass
 			{
 			private:
@@ -990,7 +991,6 @@ namespace HIGHOMEGA
 				void Render();
 				unsigned int CanSee(unsigned int viewer, unsigned int subject);
 			};
-
 			class TemporalAccumulateClass : public OffScreenPassClass
 			{
 			private:

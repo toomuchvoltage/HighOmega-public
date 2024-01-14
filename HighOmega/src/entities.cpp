@@ -595,6 +595,11 @@ vec3 HIGHOMEGA::ENTITIES::CharacterPhysics::GetEye()
 	return bodyPos + bodyDir*3.0f*bodyRad*bodyStretch;
 }
 
+float HIGHOMEGA::ENTITIES::CharacterPhysics::GetStandingHeight()
+{
+	return 3.0f * bodyRad + 3.0f;
+}
+
 void HIGHOMEGA::ENTITIES::CharacterPhysics::ForcePosFromEye(vec3 inEye)
 {
 	bodyPos = inEye - bodyDir * 3.0f*bodyRad*bodyStretch;

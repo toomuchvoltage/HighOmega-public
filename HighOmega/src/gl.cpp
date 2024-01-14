@@ -5410,7 +5410,7 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateInstanceData(std::vector <VkAccelerat
 	allMat.reserve(instCount * 5);
 	allGeom.reserve(instCount);
 
-	unsigned int bufferInstanceCount = (((unsigned int)allTraceItems.size() / 1000) + 1) * 1000;
+	unsigned int bufferInstanceCount = (((unsigned int)instCount / 1000) + 1) * 1000;
 	unsigned int instanceBufferSize = bufferInstanceCount * sizeof(InstanceProperties);
 
 	allInstanceData.clear();
