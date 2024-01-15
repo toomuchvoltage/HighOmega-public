@@ -760,7 +760,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(std::string & newGroupId, MeshMater
 	isInit = true;
 }
 
-void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction, mat4 *inpTransform, bool gpuResideOnly, bool inpImmutable, bool loadAnimationData, vec3* viewPos)
+void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, std::string belong, InstanceClass &ptrToInstance, std::function<bool(int, DataGroup &)> inpFilterFunction, mat4 *inpTransform, bool gpuResideOnly, bool inpImmutable, bool loadAnimationData, vec3* viewPos, float* fullBodyHeight)
 {
 	if (isInit) RemovePast();
 
@@ -903,7 +903,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, st
 		vertAnimData.clear();
 	}
 
-	doStaticTessellation(ptrToInstance, gpuResideOnly, inpImmutable, viewPos);
+	doStaticTessellation(ptrToInstance, gpuResideOnly, inpImmutable, viewPos, fullBodyHeight);
 
 	isInit = true;
 }
@@ -932,7 +932,7 @@ MeshMaterial HIGHOMEGA::RENDER::GraphicsModel::getMaterialById(std::string & gro
 	return MeshMaterial();
 }
 
-void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrToInstance, bool gpuResideOnly, bool inpImmutable, vec3* viewPos)
+void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrToInstance, bool gpuResideOnly, bool inpImmutable, vec3* viewPos, float* fullBodyHeight, bool firstRun)
 {
 	for (std::pair<const std::string, TessellateVerts>& curPair : tessellateGeom)
 	{
@@ -945,7 +945,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrTo
 		{
 			curTessVerts.cent = (curTessVerts.origMin + curTessVerts.origMax) * 0.5f;
 			curTessVerts.rad = (curTessVerts.origMax - curTessVerts.origMin).length() * 0.5f;
-			curTessVerts.targetTessellationPower = min (curTessVerts.maxTessellationPower, floor(curTessVerts.maxTessellationPower * (curTessVerts.rad / (*viewPos - curTessVerts.cent).length())));
+			curTessVerts.targetTessellationPower = min (curTessVerts.maxTessellationPower, floor(curTessVerts.maxTessellationPower * (max (fullBodyHeight ? *fullBodyHeight * 2.0f : 0.0f, curTessVerts.rad) / (*viewPos - curTessVerts.cent).length())));
 		}
 		else
 			curTessVerts.targetTessellationPower = curTessVerts.maxTessellationPower;
@@ -960,6 +960,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrTo
 				curTessVerts.addedGeom = new GeometryClass(ptrToInstance, curTessVerts.verts, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), curMat.isAlphaKeyed, curGroupId, gpuResideOnly, inpImmutable);
 				curTessVerts.addedGeom->setRTBufferDirty();
 				curTessVerts.addedGeom->notifySubmissions = curTessVerts.curGeom->notifySubmissions;
+				if (!firstRun) break; // Past the first run, reduce pressure on the GPU. Do one instance at a time.
 			}
 			else
 			{
@@ -1026,6 +1027,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::doStaticTessellation(InstanceClass& ptrTo
 		{
 			curTessVerts.addedGeom = newGeom;
 			curTessVerts.addedGeom->notifySubmissions = curTessVerts.curGeom->notifySubmissions;
+			if (!firstRun) break; // Past the first run, reduce pressure on the GPU. Do one instance at a time.
 		}
 		else
 		{
@@ -2174,12 +2176,22 @@ SubmittedRenderItem HIGHOMEGA::RENDER::GroupedRasterSubmission::Add(GraphicsMode
 
 bool HIGHOMEGA::RENDER::GroupedRasterSubmission::postProcessOnlyFilter(MeshMaterial & curMat)
 {
-	if (!curMat.postProcess) return false;
-	return true;
+	return curMat.postProcess;
+}
+
+bool HIGHOMEGA::RENDER::GroupedRasterSubmission::blendOnlyFilter(MeshMaterial& curMat)
+{
+	return curMat.pipelineFlags.alphaBlending && curMat.pipelineFlags.changedBlendEnable;
 }
 
 bool HIGHOMEGA::RENDER::GroupedRasterSubmission::everythingFilter(MeshMaterial & curMat)
 {
+	return true;
+}
+
+bool HIGHOMEGA::RENDER::GroupedRasterSubmission::noBlendOrPostProcessFilter(MeshMaterial& curMat)
+{
+	if (curMat.postProcess || (curMat.pipelineFlags.alphaBlending && curMat.pipelineFlags.changedBlendEnable)) return false;
 	return true;
 }
 
@@ -4113,6 +4125,14 @@ void HIGHOMEGA::RENDER::PASSES::VisibilityPassClass::Create(unsigned int width, 
 	submission.SetDepthClear(0.0f);
 	submission.SetDefaultPipelineFlags(defaultPipelineFlags);
 	submission.SetFrameBuffer(frameBuffer);
+	submission.matTransform = [](const MeshMaterial& inMat) ->MeshMaterial {
+		if (!inMat.postProcess && inMat.isAlphaKeyed) {
+			MeshMaterial retMat = inMat;
+			retMat.shaderName = "alphaKey";
+			return retMat;
+		}
+		return inMat;
+	};
 
 	shader.Create("shaders/visibility.vert.spv", "main", "shaders/visibility.frag.spv", "main");
 	shader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, visFrustum.Buffer);
@@ -4267,6 +4287,7 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Create(TriClass & PostProcessTri
 		glossTraceShader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 15, ShadowMapFar.frustum.Buffer);
 		glossTraceShader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 16, shadowBiasesBuf);
 		glossTraceShader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 17, SkyDome.rayleighMieBuf);
+		glossTraceShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 18, *blueNoise);
 		glossSubmission.SetShader("default", glossTraceShader);
 		glossSubmission.requestSDFBVH(*sdfBVHSubmission);
 	}
@@ -4353,6 +4374,7 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Render(vec3 & currentViewer)
 			tracingResourcesGloss.emplace_back(RESOURCE_UBO, RT_RAYGEN, 0, 15, shadowMapFarRef->frustum.Buffer);
 			tracingResourcesGloss.emplace_back(RESOURCE_UBO, RT_RAYGEN, 0, 16, shadowBiasesBuf);
 			tracingResourcesGloss.emplace_back(RESOURCE_UBO, RT_RAYGEN, 0, 17, SkyDomeRef->rayleighMieBuf);
+			tracingResourcesGloss.emplace_back(RESOURCE_SAMPLER, RT_RAYGEN, 0, 18, *blueNoise);
 			tracingResourcesGloss.emplace_back(RESOURCE_SSBO, RT_RCHIT | RT_ANYHIT, 1, rtSceneRef.getGeomResources());
 			tracingResourcesGloss.emplace_back(RESOURCE_SAMPLER, RT_RCHIT | RT_ANYHIT, 2, rtSceneRef.getMaterialResources());
 			tracingResourcesGloss.emplace_back(RESOURCE_SSBO, RT_RCHIT, 3, 0, rtSceneRef.getInstancePropertiesBuffer());

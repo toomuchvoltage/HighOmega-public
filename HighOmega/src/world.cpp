@@ -353,7 +353,7 @@ unsigned long long HIGHOMEGA::WORLD::PlasteredItemsClass::Populate(Mesh & inpMes
 			curCollection.integrateParams.InstanceCountAmplitudePhaseCurTime[3] = 0.0f;
 
 			curCollection.transformInstancesSource = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO, Instance, transformSourceMats.data(), meshCount * (unsigned int)sizeof(transformSourceData));
-			curCollection.transformInstances = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO, Instance, nullptr, meshCount * (unsigned int)sizeof(transformSourceData) * 2); // mat and matDT
+			curCollection.transformInstances = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO, Instance, nullptr, meshCount * (unsigned int)sizeof(transformSourceData));
 			curCollection.integrateParamsBuf = new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &curCollection.integrateParams, (unsigned int)sizeof(curCollection.integrateParams));
 			curCollection.integrateShader = new ShaderResourceSet;
 			curCollection.integrateShader->AddResource(RESOURCE_SSBO, COMPUTE, 0, 0, *curCollection.transformInstancesSource);
@@ -453,6 +453,20 @@ void HIGHOMEGA::WORLD::PlasteredItemsClass::UpdateSDFs()
 			sris.push_back(sri);
 		}
 	GraphicsModel::UpdateSDFs(sris);
+}
+
+void HIGHOMEGA::WORLD::PlasteredItemsClass::ForceRefreshSDFs(std::function<bool(MeshMaterial& curMat)> inpFilterFunction)
+{
+	std::vector<SubmittedRenderItem> sris;
+	for (std::pair<const unsigned long long, std::vector<plasterCollection>>& curCollectionPair : allCollections)
+		for (plasterCollection& curCollection : curCollectionPair.second)
+		{
+			SubmittedRenderItem sri;
+			sri.item = curCollection.collectionModel;
+			sri.filterFunction = inpFilterFunction;
+			sris.push_back(sri);
+		}
+	GraphicsModel::UpdateSDFs(sris, true);
 }
 
 void HIGHOMEGA::WORLD::PlasteredItemsClass::Remove(unsigned long long curId)
@@ -562,9 +576,10 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 			bool foundZoneLoaded;
 			{std::unique_lock<std::mutex> lk(zoneStreamingPtr->zone_producer_mutex);
 			foundZoneLoaded = (zoneStreamingPtr->loadedZones.find(foundZone) != zoneStreamingPtr->loadedZones.end()); }
+			float playerStandingHeight = player.GetStandingHeight();
 			if (foundZoneLoaded)
 			{
-				zoneStreamingPtr->loadedZones[foundZone].graphicsModel->doStaticTessellation(Instance, true, true, &zoneStreamingPtr->curPos);
+				zoneStreamingPtr->loadedZones[foundZone].graphicsModel->doStaticTessellation(Instance, true, true, &zoneStreamingPtr->curPos, &playerStandingHeight, false);
 				continue;
 			}
 			Mesh* newMesh = new Mesh(zoneStreamingPtr->zoneLocation + foundZone.name + std::string(".3md"));
@@ -584,14 +599,14 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 				graphicsModel = new GraphicsModel(*newMesh, placedMeshAssetLoc, Instance, [](int, DataGroup& inpGroup) -> bool {
 					float tmpFloat;
 					return !Mesh::getDataRowFloat(inpGroup, "PROPS", "cloth", tmpFloat);
-					}, nullptr, true, true, false, &zoneStreamingPtr->curPos);
+					}, nullptr, true, true, false, &zoneStreamingPtr->curPos, &playerStandingHeight);
 				rigidBody = new RigidBody(*newMesh, placedMeshAssetLoc, tmpOrient, tmpPos, true);
 			}
 			else {
 				graphicsModel = new GraphicsModel(*newMesh, zoneStreamingPtr->zoneLocation, Instance, [](int, DataGroup& inpGroup) -> bool {
 					float tmpFloat;
 					return !Mesh::getDataRowFloat(inpGroup, "PROPS", "cloth", tmpFloat);
-					}, nullptr, true, true, false, &zoneStreamingPtr->curPos);
+					}, nullptr, true, true, false, &zoneStreamingPtr->curPos, &playerStandingHeight);
 				rigidBody = new RigidBody(*newMesh, zoneStreamingPtr->zoneLocation, tmpOrient, tmpPos, true);
 			}
 			std::function<SubmittedRenderItem(GroupedRenderSubmission*, GraphicsModel*)> passThroughSubmit =
@@ -621,6 +636,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 		zoneStreamingPtr->plasteredItemsLoaders[threadId].Update(0.0f);
 		zoneStreamingPtr->particleSystemLoaders[threadId].Update(0.0f);
 		zoneStreamingPtr->perLoaderReducer[threadId].Process();
+		// Comment out and use force refresh in main pipeline loop if you'd like frame-by-frame updates
 		zoneStreamingPtr->plasteredItemsLoaders[threadId].UpdateSDFs();
 		zoneStreamingPtr->particleSystemLoaders[threadId].UpdateSDFs();
 		zoneStreamingPtr->guidedModelLoaders[threadId].UpdateSDFs();
@@ -752,7 +768,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::Update(vec3 & inpPos, bool forceUpdat
 {
 	if (!zoneStreamingActivated) return;
 
-	if (!producingZones && noZonesProduced() && ((inpPos - curPos).length() > 100.0f || forceUpdate) )
+	if (!producingZones && noZonesProduced() && ((curPos - inpPos).length() > 100.0f || forceUpdate))
 	{
 		int curTileX, curTileY, curTileZ;
 		curPos = inpPos;
@@ -1966,48 +1982,21 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Add(ParticleEmitter & emitterRef)
 	vec3 emitterDir = vec3(emitterRef.integrateParams.dirLinSpeedVar[0], emitterRef.integrateParams.dirLinSpeedVar[1], emitterRef.integrateParams.dirLinSpeedVar[2]);
 	vec3 initParticlePos = emitterPos + cross(emitterDir, randNormVec()).normalized() * emitterRef.integrateParams.radAngSpeedBaseAngSpeedVarFadeRateBase[0];
 
-	vec3 rotAxis = randNormVec();
-	curItem.rotAxisScale[0] = rotAxis.x;
-	curItem.rotAxisScale[1] = rotAxis.y;
-	curItem.rotAxisScale[2] = rotAxis.z;
-	curItem.rotAxisScale[3] = emitterRef.integrateParams.deathRateVarInitialScaleInitialAlphaCurTime[1];
-	vec3 xAxis = cross(rotAxis + vec3(0.1f), rotAxis).normalized();
-	vec3 yAxis = cross(rotAxis, xAxis);
-	curItem.xAxisAlpha[0] = xAxis.x;
-	curItem.xAxisAlpha[1] = xAxis.y;
-	curItem.xAxisAlpha[2] = xAxis.z;
-	curItem.xAxisAlpha[3] = emitterRef.integrateParams.deathRateVarInitialScaleInitialAlphaCurTime[2];
-	curItem.yAxisHealth[0] = yAxis.x;
-	curItem.yAxisHealth[1] = yAxis.y;
-	curItem.yAxisHealth[2] = yAxis.z;
-	curItem.yAxisHealth[3] = 0.0001f;
-	curItem.posFadeRate[0] = initParticlePos.x;
-	curItem.posFadeRate[1] = initParticlePos.y;
-	curItem.posFadeRate[2] = initParticlePos.z;
-	curItem.posFadeRate[3] = emitterRef.integrateParams.radAngSpeedBaseAngSpeedVarFadeRateBase[3] + emitterRef.integrateParams.fadeRateVarShrinkRateBaseShrinkRateVarDeathRateBase[0] * randFract();
-	curItem.shrinkRateDeathRateLinSpeed[0] = emitterRef.integrateParams.fadeRateVarShrinkRateBaseShrinkRateVarDeathRateBase[1] + emitterRef.integrateParams.fadeRateVarShrinkRateBaseShrinkRateVarDeathRateBase[2] * randFract();
-	curItem.shrinkRateDeathRateLinSpeed[1] = emitterRef.integrateParams.fadeRateVarShrinkRateBaseShrinkRateVarDeathRateBase[3] + emitterRef.integrateParams.deathRateVarInitialScaleInitialAlphaCurTime[0] * randFract();
-	curItem.shrinkRateDeathRateLinSpeed[2] = emitterRef.integrateParams.posLinSpeedBase[3] + emitterRef.integrateParams.dirLinSpeedVar[3] * randFract();
-	mat4 curTransMat = prepareTransMat(curItem);
-	UnpackMat4(curTransMat, curItem.trans);
+	vec3 alphaHealthFadeRate = vec3(emitterRef.integrateParams.deathRateVarInitialScaleInitialAlphaCurTime[2], 0.0001f, emitterRef.integrateParams.radAngSpeedBaseAngSpeedVarFadeRateBase[3] + emitterRef.integrateParams.fadeRateVarShrinkRateBaseShrinkRateVarDeathRateBase[0] * randFract());
+	float packedAlphaHealthFadeRateShrinkRate = packColor(alphaHealthFadeRate, emitterRef.integrateParams.fadeRateVarShrinkRateBaseShrinkRateVarDeathRateBase[1] + emitterRef.integrateParams.fadeRateVarShrinkRateBaseShrinkRateVarDeathRateBase[2] * randFract());
+	vec3 deathRateReserved = vec3(emitterRef.integrateParams.fadeRateVarShrinkRateBaseShrinkRateVarDeathRateBase[3] + emitterRef.integrateParams.deathRateVarInitialScaleInitialAlphaCurTime[0] * randFract(), 0.0f, 0.0f);
+	float packedDeathRateReserved = packColor(deathRateReserved, 0.0f);
+
+	vec3 planeNormal = randNormVec();
+	curItem.pos[0] = initParticlePos.x;
+	curItem.pos[1] = initParticlePos.y;
+	curItem.pos[2] = initParticlePos.z;
+	curItem.planeNormal = toZSignXY(planeNormal);
+	curItem.alphaHealthFadeRateShrinkRate = *((unsigned int*)&packedAlphaHealthFadeRateShrinkRate);
+	curItem.scaleLineSpeed = toFP16(vec2 (emitterRef.integrateParams.deathRateVarInitialScaleInitialAlphaCurTime[1], emitterRef.integrateParams.posLinSpeedBase[3] + emitterRef.integrateParams.dirLinSpeedVar[3] * randFract()));
+	curItem.deathRateReserved = *((unsigned int*)&packedDeathRateReserved);
 
 	emitterRef.particles.push_back(curItem);
-}
-
-mat4 HIGHOMEGA::WORLD::ParticleSystemClass::prepareTransMat(ParticleItem & inpItem)
-{
-	vec3 xAxis = vec3(inpItem.xAxisAlpha[0], inpItem.xAxisAlpha[1], inpItem.xAxisAlpha[2]);
-	vec3 yAxis = vec3(inpItem.yAxisHealth[0], inpItem.yAxisHealth[1], inpItem.yAxisHealth[2]);
-	vec3 rotAxis = vec3(inpItem.rotAxisScale[0], inpItem.rotAxisScale[1], inpItem.rotAxisScale[2]);
-	float scale = inpItem.rotAxisScale[3];
-	vec3 pos = vec3(inpItem.posFadeRate[0], inpItem.posFadeRate[1], inpItem.posFadeRate[2]);
-
-	mat4 transMat;
-	transMat.Ident();
-	transMat.i[0][0] = xAxis.x * scale; transMat.i[0][1] = yAxis.x * scale;	transMat.i[0][2] = rotAxis.x * scale; transMat.i[0][3] = pos.x;
-	transMat.i[1][0] = xAxis.y * scale; transMat.i[1][1] = yAxis.y * scale; transMat.i[1][2] = rotAxis.y * scale; transMat.i[1][3] = pos.y;
-	transMat.i[2][0] = xAxis.z * scale; transMat.i[2][1] = yAxis.z * scale;	transMat.i[2][2] = rotAxis.z * scale; transMat.i[2][3] = pos.z;
-	return transMat;
 }
 
 vec3 HIGHOMEGA::WORLD::ParticleSystemClass::randNormVec()
@@ -2278,10 +2267,13 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Update(float elapseTime)
 	}
 
 	for (std::pair<const unsigned long long, std::vector<ParticleEmitter>> & curEmittersIdPair : allEmitters)
-		for (ParticleEmitter & curEmitter : curEmittersIdPair.second)
+		for (ParticleEmitter& curEmitter : curEmittersIdPair.second)
+		{
 			if (curEmitter.allSubmissionInfos.size() == 0)
-				for (GroupedRenderSubmission *curSubmission : submissionsForParticle)
+				for (GroupedRenderSubmission* curSubmission : submissionsForParticle)
 					curEmitter.allSubmissionInfos.emplace_back(perSubmissionCall(curSubmission, curEmitter.collectionModel));
+			curEmitter.collectionModel->SetDirty();
+		}
 }
 
 void HIGHOMEGA::WORLD::ParticleSystemClass::UpdateSDFs()
@@ -2295,6 +2287,20 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::UpdateSDFs()
 			sris.push_back(sri);
 		}
 	GraphicsModel::UpdateSDFs(sris);
+}
+
+void HIGHOMEGA::WORLD::ParticleSystemClass::ForceRefreshSDFs(std::function<bool(MeshMaterial& curMat)> inpFilterFunction)
+{
+	std::vector<SubmittedRenderItem> sris;
+	for (std::pair<const unsigned long long, std::vector<ParticleEmitter>>& curEmittersPair : allEmitters)
+		for (ParticleEmitter& curEmitter : curEmittersPair.second)
+		{
+			SubmittedRenderItem sri;
+			sri.item = curEmitter.collectionModel;
+			sri.filterFunction = inpFilterFunction;
+			sris.push_back(sri);
+		}
+	GraphicsModel::UpdateSDFs(sris, true);
 }
 
 void HIGHOMEGA::WORLD::ParticleSystemClass::ClearContent()
@@ -2782,6 +2788,20 @@ void HIGHOMEGA::WORLD::GuidedModelSystemClass::UpdateSDFs()
 	GraphicsModel::UpdateSDFs(sris);
 }
 
+void HIGHOMEGA::WORLD::GuidedModelSystemClass::ForceRefreshSDFs(std::function<bool(MeshMaterial& curMat)> inpFilterFunction)
+{
+	std::vector<SubmittedRenderItem> sris;
+	for (std::pair<const unsigned long long, std::vector<PathState>>& curPathStatesIdPair : allItems)
+		for (PathState& curPathState : curPathStatesIdPair.second)
+		{
+			SubmittedRenderItem sri;
+			sri.item = curPathState.transformedModel;
+			sri.filterFunction = inpFilterFunction;
+			sris.push_back(sri);
+		}
+	GraphicsModel::UpdateSDFs(sris, true);
+}
+
 void HIGHOMEGA::WORLD::GuidedModelSystemClass::ClearContent()
 {
 	for (std::pair<const unsigned long long, std::vector<PathState>> & curItem : allItems)
@@ -2890,13 +2910,17 @@ HIGHOMEGA::WORLD::DefaultPipelineSetupClass::DefaultPipelineSetupClass(std::stri
 		MainMenuPassed = true;
 	}
 
-	zoneStreaming.Create(mapBelong, { &VisibilityPass.submission, &mainRTSubmission, &sdfBvhSubmission, &ShadowMapCascadeNear.submission, &ShadowMapCascadeFar.submission, &ScreenSpaceGather.submission },
+	zoneStreaming.Create(mapBelong, { &VisibilityPass.submission, &mainRTSubmission, &sdfBvhSubmission, &ShadowMapCascadeNear.submission, &ShadowMapCascadeFar.submission, &Modulate.submission, &ScreenSpaceGather.submission },
 	[&](GroupedRenderSubmission *inpSub, GraphicsModel *inpGraphicsModel) -> SubmittedRenderItem
 	{
 		if (inpSub == &ShadowMapCascadeNear.submission || inpSub == &ShadowMapCascadeFar.submission)
 			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::everythingFilter);
 		else if (inpSub == &ScreenSpaceGather.submission)
 			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::postProcessOnlyFilter);
+		else if (inpSub == &Modulate.submission)
+			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::blendOnlyFilter);
+		else if (inpSub == &VisibilityPass.submission)
+			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::noBlendOrPostProcessFilter);
 		else
 			return inpSub->Add(*inpGraphicsModel);
 	});

@@ -869,16 +869,24 @@ vec2 HIGHOMEGA::MATH::unpackSpherical(float inpPack)
 float HIGHOMEGA::MATH::packColor(vec3 & color)
 {
 	vec3 colorNorm = color * 255.0f;
-	unsigned int retVal = (((unsigned char)colorNorm.x) << 24) | (((unsigned char)colorNorm.y) << 16) | (((unsigned char)colorNorm.z) << 8);
+	unsigned int retVal = (((unsigned char)colorNorm.z) << 16) | (((unsigned char)colorNorm.y) << 8) | ((unsigned char)colorNorm.x);
 	return *((float *)&retVal);
+}
+
+float HIGHOMEGA::MATH::packColor(vec3 & color, float alpha)
+{
+	vec3 colorNorm = color * 255.0f;
+	alpha *= 255.0f;
+	unsigned int retVal = (((unsigned char)alpha) << 24) | (((unsigned char)colorNorm.z) << 16) | (((unsigned char)colorNorm.y) << 8) | ((unsigned char)colorNorm.x);
+	return *((float*)&retVal);
 }
 
 void HIGHOMEGA::MATH::unpackColor(float inpPack, vec3 & color)
 {
 	unsigned int packInt = *((unsigned int *)&inpPack);
-	color.x = (float)((packInt & 0xFF000000) >> 24) / 255.0f;
-	color.y = (float)((packInt & 0x00FF0000) >> 16) / 255.0f;
-	color.z = (float)((packInt & 0x0000FF00) >> 8) / 255.0f;
+	color.x = (float)(packInt  & 0x000000FF) / 255.0f;
+	color.y = (float)((packInt & 0x0000FF00) >> 8) / 255.0f;
+	color.z = (float)((packInt & 0x00FF0000) >> 16) / 255.0f;
 }
 
 unsigned short HIGHOMEGA::MATH::toFP16(float f)

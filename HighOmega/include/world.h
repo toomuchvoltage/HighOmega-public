@@ -149,6 +149,7 @@ namespace HIGHOMEGA
 			unsigned long long Populate(Mesh & inpMesh, std::vector<GroupedRenderSubmission*> &&submissionList, std::function<SubmittedRenderItem(GroupedRenderSubmission*, GraphicsModel*)> inpPerSubmissionCall, minMaxReductionClass & inpMinMaxReducter);
 			void Update(float elapseTime);
 			void UpdateSDFs();
+			void ForceRefreshSDFs(std::function<bool(MeshMaterial& curMat)> inpFilterFunction);
 			void Remove(unsigned long long curId);
 			void ClearContent();
 		};
@@ -166,13 +167,11 @@ namespace HIGHOMEGA
 			std::unordered_map <std::string, MeshModel> cachedMeshesModels;
 			struct ParticleItem
 			{
-				float rotAxisScale[4];
-				float xAxisAlpha[4];
-				float yAxisHealth[4];
-				float posFadeRate[4];
-				float shrinkRateDeathRateLinSpeed[3];
-				float trans[16];
-				float transDT[16];
+				float pos[3];
+				unsigned int planeNormal;
+				unsigned int alphaHealthFadeRateShrinkRate;
+				float scaleLineSpeed;
+				unsigned int deathRateReserved;
 			};
 			struct EmitterParams
 			{
@@ -214,7 +213,6 @@ namespace HIGHOMEGA
 			std::vector <GroupedRenderSubmission *> submissionsForParticle;
 			std::function<SubmittedRenderItem(GroupedRenderSubmission*, GraphicsModel*)> perSubmissionCall;
 			void Add(ParticleEmitter & emitterRef);
-			mat4 prepareTransMat(ParticleItem & inpItem);
 			vec3 randNormVec();
 			float randFract();
 			unsigned int WorkGroupTransformX();
@@ -227,6 +225,7 @@ namespace HIGHOMEGA
 			void Combine(std::vector <ParticleSystemClass> & particleClasses, std::vector<GroupedRenderSubmission*>& submissionList, std::function<SubmittedRenderItem(GroupedRenderSubmission*, GraphicsModel*)> inpPerSubmissionCall);
 			void Update(float elapseTime);
 			void UpdateSDFs();
+			void ForceRefreshSDFs(std::function<bool(MeshMaterial& curMat)> inpFilterFunction);
 			void ClearContent();
 		};
 
@@ -281,6 +280,7 @@ namespace HIGHOMEGA
 			void Combine(std::vector <GuidedModelSystemClass> & guidedModelsClasses, std::vector<GroupedRenderSubmission*>& submissionList, std::function<SubmittedRenderItem(GroupedRenderSubmission*, GraphicsModel*)> inpPerSubmissionCall);
 			void Remove(unsigned long long curId);
 			void UpdateSDFs();
+			void ForceRefreshSDFs(std::function<bool(MeshMaterial& curMat)> inpFilterFunction);
 			void ClearContent();
 		};
 

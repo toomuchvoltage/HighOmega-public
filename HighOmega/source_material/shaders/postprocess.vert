@@ -58,16 +58,6 @@ out gl_PerVertex
 	vec4 gl_Position;
 };
 
-vec3 unpackColor(float inpPack)
-{
-	uint packInt = floatBitsToUint (inpPack);
-	vec3 color;
-	color.x = float((packInt & 0xFF000000) >> 24) / 255.0;
-	color.y = float((packInt & 0x00FF0000) >> 16) / 255.0;
-	color.z = float((packInt & 0x0000FF00) >> 8) / 255.0;
-	return color;
-}
-
 vec3 fromZSignXY(uint inpPack)
 {
 	vec3 retVal;
@@ -82,7 +72,7 @@ vec3 fromZSignXY(uint inpPack)
 void unpackRasterVertex(out vec3 vPos, out vec3 vCol, out vec2 vUV, out vec3 vNorm, in vec4 rv1, in vec2 rv2, in uint rv3)
 {
 	vPos = rv1.xyz;
-	vCol = unpackColor(rv1.w);
+	vCol = unpackUnorm4x8(floatBitsToUint(rv1.w)).xyz;
 
 	vUV = rv2;
 	vNorm = fromZSignXY(rv3);
