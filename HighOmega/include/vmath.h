@@ -156,6 +156,8 @@ namespace HIGHOMEGA
 
 		float packColor(vec3 & color);
 
+		float packColor(vec3 & color, float alpha);
+
 		void unpackColor(float inpPack, vec3 & color);
 
 		inline unsigned short toFP16(float f);

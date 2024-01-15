@@ -113,6 +113,7 @@ namespace HIGHOMEGA
 			static void FootTriOverlap(vec3 * footTri1, vec3 & footTri1Norm, vec3 * footTri2, vec3 & footTri2Norm, vec3 & footTri1Min, vec3 & footTri1Max, vec3 & footTri2Min, vec3 & footTri2Max, vec3 & footTrisMin, vec3 & footTrisMax, bool & footOnGround, MATERIAL & inpMat, unsigned int threadId);
 			void Move(bool fwd,bool back,bool left,bool right,bool jump,bool crouch);
 			vec3 GetEye();
+			float GetStandingHeight();
 			void ForcePosFromEye(vec3 inEye);
 		};
 		extern CharacterPhysics player;
