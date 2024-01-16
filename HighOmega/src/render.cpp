@@ -2667,6 +2667,15 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 					if (curResourcesRequested == resourcesRequested)
 					{
 						shaderResources.clear();
+						shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 0, curMat.diffRef->elem);
+						if (curMat.nrmRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 1, curMat.nrmRef->elem);
+						else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 1, curMat.diffRef->elem);
+						if (curMat.rghRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 2, curMat.rghRef->elem);
+						else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 2, curMat.diffRef->elem);
+						if (curMat.hgtRef) shaderResources.emplace_back(RESOURCE_SAMPLER, TESS_EVAL, 1, 3, curMat.hgtRef->elem);
+						else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 3, curMat.diffRef->elem);
+						if (curMat.spcRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 4, curMat.spcRef->elem);
+						else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 4, curMat.diffRef->elem);
 						shaderResources.emplace_back(RESOURCE_SSBO, VERTEX, 1, 5, SSBO);
 						if (requestsBVH)
 						{
