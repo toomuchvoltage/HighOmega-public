@@ -1348,6 +1348,11 @@ void HIGHOMEGA::GL::ShaderResourceSet::CreateRT(std::string inpRaygen, std::stri
 	StringToCString(&rt_rayahit_entry_cstr, rt_rayahit_entry);
 }
 
+void HIGHOMEGA::GL::ShaderResourceSet::SetStageSpecializationData(PIPELINE_STAGE&& inStage, ShaderSpecilization inSpecializationData)
+{
+	stageSpecializationData[inStage] = inSpecializationData;
+}
+
 HIGHOMEGA::GL::ShaderResourceSet::ShaderResourceSet()
 {
 	vertex_entry_cstr = nullptr;
@@ -1447,6 +1452,14 @@ void HIGHOMEGA::GL::ShaderResourceSet::RemovePast()
 std::vector<ShaderResource> & HIGHOMEGA::GL::ShaderResourceSet::getAdditionalResources()
 {
 	return additionalResources;
+}
+
+ShaderSpecilization* HIGHOMEGA::GL::ShaderResourceSet::getStageSpecializationDataRef(PIPELINE_STAGE&& inStage)
+{
+	if (stageSpecializationData.find(inStage) == stageSpecializationData.end())
+		return nullptr;
+	else
+		return &stageSpecializationData[inStage];
 }
 
 HIGHOMEGA::GL::ShaderResourceSet::~ShaderResourceSet()
@@ -1575,34 +1588,38 @@ HIGHOMEGA::GL::RasterPipelineStateClass::RasterPipelineStateClass(InstanceClass 
 	multisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
 	std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
-	try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.vertex_shader, inpShader.getVertEntry(), VK_SHADER_STAGE_VERTEX_BIT)->elem.stage); }
+	std::string vertexKey, fragmentKey;
+	try { shaderStages.push_back (AddOrFindCachedShaderStage(*ptrToInstance, inpShader.vertex_shader, inpShader.getVertEntry(), VK_SHADER_STAGE_VERTEX_BIT, inpShader.getStageSpecializationDataRef(VERTEX), vertexKey)->elem.stage); }
 	catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create vertex shader"); }
 
-	try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.fragment_shader, inpShader.getFragEntry(), VK_SHADER_STAGE_FRAGMENT_BIT)->elem.stage); }
+	try { shaderStages.push_back (AddOrFindCachedShaderStage(*ptrToInstance, inpShader.fragment_shader, inpShader.getFragEntry(), VK_SHADER_STAGE_FRAGMENT_BIT, inpShader.getStageSpecializationDataRef(FRAGMENT), fragmentKey)->elem.stage); }
 	catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create fragment shader"); }
 
-	usedShaderStages.push_back(inpShader.vertex_shader + std::string(":") + inpShader.getVertEntry());
-	usedShaderStages.push_back(inpShader.fragment_shader + std::string(":") + inpShader.getFragEntry());
+	usedShaderStages.push_back(vertexKey);
+	usedShaderStages.push_back(fragmentKey);
 
 	if (inpShader.getTCEntry())
 	{
-		try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.tc_shader, inpShader.getTCEntry(), VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT)->elem.stage); }
+		std::string tcKey;
+		try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.tc_shader, inpShader.getTCEntry(), VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, inpShader.getStageSpecializationDataRef(TESS_CTRL), tcKey)->elem.stage); }
 		catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create tessellation control shader"); }
-		usedShaderStages.push_back(inpShader.tc_shader + std::string(":") + inpShader.getTCEntry());
+		usedShaderStages.push_back(tcKey);
 	}
 
 	if (inpShader.getTEEntry())
 	{
-		try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.te_shader, inpShader.getTEEntry(), VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT)->elem.stage); }
+		std::string teKey;
+		try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.te_shader, inpShader.getTEEntry(), VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, inpShader.getStageSpecializationDataRef(TESS_EVAL), teKey)->elem.stage); }
 		catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create tessellation evaluation shader"); }
-		usedShaderStages.push_back(inpShader.te_shader + std::string(":") + inpShader.getTEEntry());
+		usedShaderStages.push_back(teKey);
 	}
 
 	if (inpShader.getGeomEntry())
 	{
-		try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.geom_shader, inpShader.getGeomEntry(), VK_SHADER_STAGE_GEOMETRY_BIT)->elem.stage); }
+		std::string geomKey;
+		try { shaderStages.push_back (AddOrFindCachedShaderStage(*ptrToInstance, inpShader.geom_shader, inpShader.getGeomEntry(), VK_SHADER_STAGE_GEOMETRY_BIT, inpShader.getStageSpecializationDataRef(GEOMETRY), geomKey)->elem.stage); }
 		catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create geometry shader"); }
-		usedShaderStages.push_back(inpShader.geom_shader + std::string(":") + inpShader.getGeomEntry());
+		usedShaderStages.push_back(geomKey);
 	}
 
 	pipelineCreateInfo.stageCount = (uint32_t)shaderStages.size();
@@ -1700,9 +1717,10 @@ HIGHOMEGA::GL::ComputePipelineStateClass::ComputePipelineStateClass(InstanceClas
 	pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
 	pipelineCreateInfo.layout = pipelineLayout;
 
-	try { pipelineCreateInfo.stage = AddOrFindCachedShaderStage(*ptrToInstance, inpShader.compute_shader, inpShader.getCompEntry(), VK_SHADER_STAGE_COMPUTE_BIT)->elem.stage; }
+	std::string computeKey;
+	try { pipelineCreateInfo.stage = AddOrFindCachedShaderStage(*ptrToInstance, inpShader.compute_shader, inpShader.getCompEntry(), VK_SHADER_STAGE_COMPUTE_BIT, inpShader.getStageSpecializationDataRef(COMPUTE), computeKey)->elem.stage; }
 	catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create compute shader"); }
-	usedShaderStage = inpShader.compute_shader + ":" + inpShader.getCompEntry();
+	usedShaderStage = computeKey;
 
 	VkPipelineCacheCreateInfo pipelineCacheCreateInfo = {};
 	pipelineCacheCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
@@ -2598,7 +2616,11 @@ HIGHOMEGA::GL::ShaderStage::ShaderStage()
 	ptrToInstance = nullptr;
 }
 
-void HIGHOMEGA::GL::ShaderStage::Shader(InstanceClass &inpPtrToInstance, std::string shaderFile, const char * entryName, VkShaderStageFlagBits stage_bit)
+ShaderStage::SpecializationDataStruct::SpecializationDataStruct()
+{
+}
+
+void HIGHOMEGA::GL::ShaderStage::Shader(InstanceClass &inpPtrToInstance, std::string shaderFile, const char * entryName, VkShaderStageFlagBits stage_bit, ShaderSpecilization* shaderSpec)
 {
 	VkShaderModule shaderModule;
 	VkShaderModuleCreateInfo moduleCreateInfo;
@@ -2649,6 +2671,19 @@ void HIGHOMEGA::GL::ShaderStage::Shader(InstanceClass &inpPtrToInstance, std::st
 	stage.pName = entryName;
 	stage.module = shaderModule;
 
+	if (shaderSpec)
+	{
+		if (SpecializationData.dataBuf.size() == 0) SpecializationData.dataBuf.resize(shaderSpec->inputs.size());
+		else throw std::runtime_error("Specialization data buffer should be initialized only once");
+		for (unsigned int i = 0; i != shaderSpec->inputs.size(); i++)
+		{
+			SpecializationData.dataBuf[i] = shaderSpec->inputs[i].value;
+			SpecializationData.entries.push_back({shaderSpec->inputs[i].bindPoint, (unsigned int)(i * sizeof(unsigned int)), sizeof(unsigned int)});
+		}
+		SpecializationData.info = { (unsigned int)SpecializationData.entries.size(), SpecializationData.entries.data(), SpecializationData.dataBuf.size() * sizeof(unsigned int), SpecializationData.dataBuf.data() };
+		stage.pSpecializationInfo = &SpecializationData.info;
+	}
+
 	ptrToInstance = &inpPtrToInstance;
 }
 
@@ -2658,15 +2693,16 @@ HIGHOMEGA::GL::ShaderStage::~ShaderStage()
 	ptrToInstance = nullptr;
 }
 
-CacheItem<ShaderStage>* HIGHOMEGA::GL::AddOrFindCachedShaderStage(InstanceClass & ptrToInstance, std::string shaderFile, const char * entryName, VkShaderStageFlagBits stage_bit)
+CacheItem<ShaderStage>* HIGHOMEGA::GL::AddOrFindCachedShaderStage(InstanceClass & ptrToInstance, std::string shaderFile, const char * entryName, VkShaderStageFlagBits stage_bit, ShaderSpecilization* shaderSpec, std::string& shaderStageKey)
 {
 	std::lock_guard<std::mutex> lk(shader_stage_mutex);
-	std::string shaderStageKey = shaderFile + ":" + entryName;
+	shaderStageKey = shaderFile + ":" + entryName;
+	if (shaderSpec) shaderStageKey += ("[" + shaderSpec->name + "]");
 	if (ShaderStageCache.find(shaderStageKey) == ShaderStageCache.end())
 	{
 		try
 		{
-			ShaderStageCache[shaderStageKey].elem.Shader(ptrToInstance, shaderFile, entryName, stage_bit);
+			ShaderStageCache[shaderStageKey].elem.Shader(ptrToInstance, shaderFile, entryName, stage_bit, shaderSpec);
 			ShaderStageCache[shaderStageKey].elemCount = 1;
 		}
 		catch (...)
@@ -5286,20 +5322,22 @@ void HIGHOMEGA::GL::KHR_RT::RTPipelineStateClass::RTPipelineState(InstanceClass 
 	if (result != VK_SUCCESS) { ErasePipelineState(); throw std::runtime_error("Could not create pipeline layout"); }
 	havePipelineLayout = true;
 
-	try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.rt_raygen_shader, inpShader.getRaygenEntry(), VK_SHADER_STAGE_RAYGEN_BIT_KHR)->elem.stage); }
+	std::string raygenKey, raymissKey, rchitKey;
+	try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.rt_raygen_shader, inpShader.getRaygenEntry(), VK_SHADER_STAGE_RAYGEN_BIT_KHR, inpShader.getStageSpecializationDataRef(RT_RAYGEN), raygenKey)->elem.stage); }
 	catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create raygen shader"); }
-	try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.rt_raymiss_shader, inpShader.getRaymissEntry(), VK_SHADER_STAGE_MISS_BIT_KHR)->elem.stage); }
+	try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.rt_raymiss_shader, inpShader.getRaymissEntry(), VK_SHADER_STAGE_MISS_BIT_KHR, inpShader.getStageSpecializationDataRef(RT_MISS), raymissKey)->elem.stage); }
 	catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create raymiss shader"); }
-	try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.rt_raychit_shader, inpShader.getRaychitEntry(), VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR)->elem.stage); }
+	try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.rt_raychit_shader, inpShader.getRaychitEntry(), VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, inpShader.getStageSpecializationDataRef(RT_RCHIT), rchitKey)->elem.stage); }
 	catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create raychit shader"); }
-	usedShaderStages.push_back(inpShader.rt_raygen_shader + std::string(":") + inpShader.getRaygenEntry());
-	usedShaderStages.push_back(inpShader.rt_raymiss_shader + std::string(":") + inpShader.getRaymissEntry());
-	usedShaderStages.push_back(inpShader.rt_raychit_shader + std::string(":") + inpShader.getRaychitEntry());
+	usedShaderStages.push_back(raygenKey);
+	usedShaderStages.push_back(raymissKey);
+	usedShaderStages.push_back(rchitKey);
 	if (inpShader.getRayahitEntry())
 	{
-		try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.rt_rayahit_shader, inpShader.getRayahitEntry(), VK_SHADER_STAGE_ANY_HIT_BIT_KHR)->elem.stage); }
+		std::string rahitKey;
+		try { shaderStages.push_back(AddOrFindCachedShaderStage(*ptrToInstance, inpShader.rt_rayahit_shader, inpShader.getRayahitEntry(), VK_SHADER_STAGE_ANY_HIT_BIT_KHR, inpShader.getStageSpecializationDataRef(RT_ANYHIT), rahitKey)->elem.stage); }
 		catch (...) { ErasePipelineState(); throw std::runtime_error("Could not create rayahit shader"); }
-		usedShaderStages.push_back(inpShader.rt_rayahit_shader + std::string(":") + inpShader.getRayahitEntry());
+		usedShaderStages.push_back(rahitKey);
 	}
 
 	shaderGroups.push_back({ VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR, nullptr, VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 0, VK_SHADER_UNUSED_KHR, VK_SHADER_UNUSED_KHR, VK_SHADER_UNUSED_KHR });

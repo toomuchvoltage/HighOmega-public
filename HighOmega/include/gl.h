@@ -787,21 +787,43 @@ namespace HIGHOMEGA
 			ShaderResource(SHADER_RESOURCE_TYPE inpType, PIPELINE_STAGE inpVisibility, unsigned int inpSetId, unsigned int inpBindId, std::vector <ShaderResource> & inpVariableCountResource);
 			unsigned int ResourceCount();
 		};
+		struct ShaderSpecilization
+		{
+			struct Constant
+			{
+				unsigned int bindPoint;
+				unsigned int value;
+			};
+			std::string name;
+			std::vector<Constant> inputs;
+		};
 		class ShaderStage
 		{
 		private:
 			InstanceClass *ptrToInstance;
 		public:
 			VkPipelineShaderStageCreateInfo stage;
+
+			struct SpecializationDataStruct
+			{
+				SpecializationDataStruct();
+				SpecializationDataStruct(SpecializationDataStruct&&) = delete;
+				SpecializationDataStruct& operator=(SpecializationDataStruct&&) = delete;
+
+				std::vector<unsigned int> dataBuf;
+				std::vector<VkSpecializationMapEntry> entries;
+				VkSpecializationInfo info;
+			} SpecializationData;
+
 			ShaderStage();
-			void Shader(InstanceClass &ptrToInstance, std::string shaderFile, const char * entryName, VkShaderStageFlagBits stage_bit);
+			void Shader(InstanceClass &ptrToInstance, std::string shaderFile, const char * entryName, VkShaderStageFlagBits stage_bit, ShaderSpecilization* shaderSpec = nullptr);
 			template<typename... Args> ShaderStage(Args&&... args)
 			{
 				Shader(std::forward<Args>(args)...);
 			}
 			~ShaderStage();
 		};
-		CacheItem<ShaderStage> * AddOrFindCachedShaderStage(InstanceClass &ptrToInstance, std::string shaderFile, const char * entryName, VkShaderStageFlagBits stage_bit);
+		CacheItem<ShaderStage> * AddOrFindCachedShaderStage(InstanceClass &ptrToInstance, std::string shaderFile, const char * entryName, VkShaderStageFlagBits stage_bit, ShaderSpecilization* shaderSpec, std::string& shaderStageKey);
 		class ShaderResourceSet
 		{
 			friend class RasterPipelineStateClass;
@@ -828,6 +850,7 @@ namespace HIGHOMEGA
 			std::string rt_raymiss_entry;
 			std::string rt_rayahit_shader;
 			std::string rt_rayahit_entry;
+			std::unordered_map<PIPELINE_STAGE, ShaderSpecilization> stageSpecializationData;
 
 		private:
 			char *vertex_entry_cstr;
@@ -850,6 +873,7 @@ namespace HIGHOMEGA
 			void Create(std::string inpVert, std::string inpVertEnt, std::string inpTessCtrl, std::string inpTessCtrlEnt, std::string inpTessEval, std::string inpTessEvalEnt, std::string inpFrag, std::string inpFragEnt);
 			void CreateRT(std::string inpRaygen, std::string inpRaygenEnt, std::string inpRaychit, std::string inpRaychitEnt, std::string inpRaymiss, std::string inpRaymissEnt);
 			void CreateRT(std::string inpRaygen, std::string inpRaygenEnt, std::string inpRaychit, std::string inpRaychitEnt, std::string inpRaymiss, std::string inpRaymissEnt, std::string inpRayahit, std::string inpRayahitEnt);
+			void SetStageSpecializationData(PIPELINE_STAGE&& inStage, ShaderSpecilization inSpecializationData);
 			char *getCompEntry();
 			char *getVertEntry();
 			char *getTCEntry();
@@ -864,6 +888,7 @@ namespace HIGHOMEGA
 			void ClearResources();
 			void RemovePast();
 			std::vector <ShaderResource> & getAdditionalResources();
+			ShaderSpecilization* getStageSpecializationDataRef(PIPELINE_STAGE&& inStage);
 			~ShaderResourceSet();
 		};
 		class DescriptorSetLayout : public CStyleWrapper
