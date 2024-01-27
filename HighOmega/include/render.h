@@ -130,6 +130,7 @@ namespace HIGHOMEGA
 			bool mipmap;
 			bool postProcess;
 			bool isAlphaKeyed;
+			bool isDecal;
 			bool backDropGlass;
 			bool scattering;
 
@@ -555,8 +556,9 @@ namespace HIGHOMEGA
 			});
 			static bool postProcessOnlyFilter(MeshMaterial & curMat);
 			static bool blendOnlyFilter(MeshMaterial & curMat);
-			static bool everythingFilter(MeshMaterial & curMat);
-			static bool noBlendOrPostProcessFilter(MeshMaterial& curMat);
+			static bool decalOnlyFilter(MeshMaterial& curMat);
+			static bool everythingButDecalsFilter(MeshMaterial & curMat);
+			static bool noBlendOrPostProcessOrDecalFilter(MeshMaterial& curMat);
 			void Remove(SubmittedRenderItem & inpSubmittedRenderItem);
 			void SetFrameBuffer(FramebufferClass & inpFrameBuffer);
 			void SetShader(std::string inpName, ShaderResourceSet & inpShader);
@@ -766,12 +768,29 @@ namespace HIGHOMEGA
 				void Render();
 			};
 
+			class DecalPassClass : public OffScreenPassClass
+			{
+			public:
+				ImageClass decalAlbedo, decalSpecular, decalRoughnessSpecularity, decalNormal;
+				FrustumClass* frustumRef;
+				FrustumClass decalFrustum;
+
+				void Create(VisibilityPassClass& VisibilityPass, FrustumClass& frustum);
+				void Render();
+			};
+
+			class TabletScreenHolderClass
+			{
+			public:
+				ImageClass tabletScreenImage, tabletScreenDS;
+			};
+
 			class GatherResolveClass : public OffScreenPassClass, public GatherPassClassCommon
 			{
 			public:
 				ImageClass materialAttach;
 
-				void Create(VisibilityPassClass & VisibilityPass, TriClass & PostProcessTri, FrustumClass & OriginalFrustum, bool simple = false);
+				void Create(VisibilityPassClass & VisibilityPass, DecalPassClass* DecalPass, TriClass & PostProcessTri, FrustumClass & OriginalFrustum, bool simple = false);
 				void Render();
 			};
 

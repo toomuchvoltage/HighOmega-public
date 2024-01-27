@@ -569,6 +569,7 @@ namespace HIGHOMEGA
 			ShadowMapScreenClass ShadowMapScreen;
 			VisibilityPassClass VisibilityPass;
 			GatherResolveClass GatherResolve;
+			DecalPassClass DecalPass;
 			PathTraceClass PathTrace;
 			DoFClass DoF;
 			TemporalAccumulateClass TemporalAccumulate;
