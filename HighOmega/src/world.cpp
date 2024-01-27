@@ -2910,17 +2910,19 @@ HIGHOMEGA::WORLD::DefaultPipelineSetupClass::DefaultPipelineSetupClass(std::stri
 		MainMenuPassed = true;
 	}
 
-	zoneStreaming.Create(mapBelong, { &VisibilityPass.submission, &mainRTSubmission, &sdfBvhSubmission, &ShadowMapCascadeNear.submission, &ShadowMapCascadeFar.submission, &Modulate.submission, &ScreenSpaceGather.submission },
+	zoneStreaming.Create(mapBelong, { &VisibilityPass.submission, &DecalPass.submission, &mainRTSubmission, &sdfBvhSubmission, &ShadowMapCascadeNear.submission, &ShadowMapCascadeFar.submission, &Modulate.submission, &ScreenSpaceGather.submission },
 	[&](GroupedRenderSubmission *inpSub, GraphicsModel *inpGraphicsModel) -> SubmittedRenderItem
 	{
 		if (inpSub == &ShadowMapCascadeNear.submission || inpSub == &ShadowMapCascadeFar.submission)
-			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::everythingFilter);
+			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::everythingButDecalsFilter);
 		else if (inpSub == &ScreenSpaceGather.submission)
 			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::postProcessOnlyFilter);
 		else if (inpSub == &Modulate.submission)
 			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::blendOnlyFilter);
+		else if (inpSub == &DecalPass.submission)
+			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::decalOnlyFilter);
 		else if (inpSub == &VisibilityPass.submission)
-			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::noBlendOrPostProcessFilter);
+			return inpSub->Add(*inpGraphicsModel, GroupedRasterSubmission::noBlendOrPostProcessOrDecalFilter);
 		else
 			return inpSub->Add(*inpGraphicsModel);
 	});
@@ -2930,7 +2932,8 @@ HIGHOMEGA::WORLD::DefaultPipelineSetupClass::DefaultPipelineSetupClass(std::stri
 	ShadowMapCascadeNear.Create(worldParams);
 	ShadowMapCascadeFar.Create(worldParams);
 	VisibilityPass.Create(ScreenSize.width, ScreenSize.height, MainFrustum);
-	GatherResolve.Create(VisibilityPass, PostProcessTri, MainFrustum);
+	DecalPass.Create(VisibilityPass, MainFrustum);
+	GatherResolve.Create(VisibilityPass, &DecalPass, PostProcessTri, MainFrustum);
 	PathTrace.Create(PostProcessTri, GatherResolve, SkyDome, ShadowMapCascadeNear, ShadowMapCascadeFar, mainRTSubmission, &sdfBvhSubmission, worldParams.StartPlayerPos());
 	ClearSurfaceCache.Create(PathTrace);
 	TemporalAccumulate.Create(PostProcessTri, GatherResolve, PathTrace);
@@ -3021,6 +3024,8 @@ HIGHOMEGA::WORLD::PipelineSetupReturn HIGHOMEGA::WORLD::DefaultPipelineSetupClas
 		ShadowMapCascadeFar.Render(zoneStreaming.getVisbileMin(), zoneStreaming.getVisbileMax(), 0.0f, vec2(0.001f, 0.002f));
 		Handler(); // We have no choice but to have this here because of SDL
 		VisibilityPass.Render();
+		Handler(); // We have no choice but to have this here because of SDL
+		DecalPass.Render();
 		Handler(); // We have no choice but to have this here because of SDL
 		GatherResolve.Render();
 		Handler(); // We have no choice but to have this here because of SDL

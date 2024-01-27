@@ -131,6 +131,7 @@ bool HIGHOMEGA::RENDER::MeshMaterial::operator==(const MeshMaterial & other) con
 		(smooth == other.smooth) &&
 		(mipmap == other.mipmap) &&
 		(isAlphaKeyed == other.isAlphaKeyed) &&
+		(isDecal == other.isDecal) &&
 		(postProcess == other.postProcess) &&
 		(backDropGlass == other.backDropGlass) &&
 		(scattering == other.scattering) &&
@@ -373,8 +374,8 @@ HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propB
 		pipelineFlags.blendEnable = true;
 		pipelineFlags.alphaBlending = true;
 		pipelineFlags.colorBlending = true;
-		pipelineFlags.srcAlphaFactor = FACTOR_ONE;
-		pipelineFlags.dstAlphaFactor = FACTOR_ZERO;
+		pipelineFlags.srcAlphaFactor = FACTOR_SRC_ALPHA;
+		pipelineFlags.dstAlphaFactor = FACTOR_ONE_MINUS_SRC_ALPHA;
 		pipelineFlags.srcColorFactor = FACTOR_SRC_ALPHA;
 		pipelineFlags.dstColorFactor = FACTOR_ONE_MINUS_SRC_ALPHA;
 		pipelineFlags.alphaBlendOp = BLEND_ADD;
@@ -386,6 +387,8 @@ HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propB
 	postProcess = Mesh::getDataRowFloat(propBlock, "isPostProcess", tmpFloat);
 
 	isAlphaKeyed = Mesh::getDataRowFloat(propBlock, "isAlphaKeyed", tmpFloat);
+
+	isDecal = Mesh::getDataRowFloat(propBlock, "isDecal", tmpFloat);
 
 	backDropGlass = Mesh::getDataRowFloat(propBlock, "isBackDropGlass", tmpFloat);
 
@@ -407,6 +410,7 @@ std::size_t HIGHOMEGA::RENDER::MeshMaterialHash::operator()(const MeshMaterial &
 		^ hash<bool>()(k.smooth)
 		^ hash<bool>()(k.mipmap)
 		^ hash<bool>()(k.isAlphaKeyed)
+		^ hash<bool>()(k.isDecal)
 		^ hash<bool>()(k.postProcess)
 		^ hash<bool>()(k.backDropGlass)
 		^ hash<bool>()(k.scattering)
@@ -2023,6 +2027,10 @@ void HIGHOMEGA::RENDER::GroupedRenderSubmission::CompileInstanceProperties(Insta
 	if (inpMaterial.scattering)
 		attribs0 |= 0x00000100;
 
+	// Is decal?
+	if (inpMaterial.isDecal)
+		attribs0 |= 0x00000200;
+
 	outProp.attribs[0] = *((float *)&attribs0);
 
 	// Player ID
@@ -2073,12 +2081,24 @@ std::string HIGHOMEGA::RENDER::GroupedRasterSubmission::GenerateRasterPSOKey(Mes
 		selShaderName = "default";
 	}
 
+	ShaderSpecilization* spec;
+
 	std::string rasterPSOKey = "";
 	rasterPSOKey += shaders[selShaderName]->vertex_shader;
+	spec = shaders[selShaderName]->getStageSpecializationDataRef(VERTEX);
+	if (spec) rasterPSOKey += "[" + spec->name + "]";
 	rasterPSOKey += shaders[selShaderName]->tc_shader;
+	spec = shaders[selShaderName]->getStageSpecializationDataRef(TESS_CTRL);
+	if (spec) rasterPSOKey += "[" + spec->name + "]";
 	rasterPSOKey += shaders[selShaderName]->te_shader;
-	rasterPSOKey += shaders[selShaderName]->geom_shader,
+	spec = shaders[selShaderName]->getStageSpecializationDataRef(TESS_EVAL);
+	if (spec) rasterPSOKey += "[" + spec->name + "]";
+	rasterPSOKey += shaders[selShaderName]->geom_shader;
+	spec = shaders[selShaderName]->getStageSpecializationDataRef(GEOMETRY);
+	if (spec) rasterPSOKey += "[" + spec->name + "]";
 	rasterPSOKey += shaders[selShaderName]->fragment_shader;
+	spec = shaders[selShaderName]->getStageSpecializationDataRef(FRAGMENT);
+	if (spec) rasterPSOKey += "[" + spec->name + "]";
 	rasterPSOKey += std::to_string(inpPFlags.backFaceCulling);
 	rasterPSOKey += std::to_string(inpPFlags.frontFaceCulling);
 	rasterPSOKey += std::to_string(inpPFlags.frontFaceClockWise);
@@ -2180,17 +2200,22 @@ bool HIGHOMEGA::RENDER::GroupedRasterSubmission::postProcessOnlyFilter(MeshMater
 
 bool HIGHOMEGA::RENDER::GroupedRasterSubmission::blendOnlyFilter(MeshMaterial& curMat)
 {
-	return curMat.pipelineFlags.alphaBlending && curMat.pipelineFlags.changedBlendEnable;
+	return curMat.pipelineFlags.alphaBlending && curMat.pipelineFlags.changedBlendEnable && (!curMat.isDecal);
 }
 
-bool HIGHOMEGA::RENDER::GroupedRasterSubmission::everythingFilter(MeshMaterial & curMat)
+bool HIGHOMEGA::RENDER::GroupedRasterSubmission::everythingButDecalsFilter(MeshMaterial & curMat)
 {
-	return true;
+	return !curMat.isDecal;
 }
 
-bool HIGHOMEGA::RENDER::GroupedRasterSubmission::noBlendOrPostProcessFilter(MeshMaterial& curMat)
+bool HIGHOMEGA::RENDER::GroupedRasterSubmission::decalOnlyFilter(MeshMaterial& curMat)
 {
-	if (curMat.postProcess || (curMat.pipelineFlags.alphaBlending && curMat.pipelineFlags.changedBlendEnable)) return false;
+	return curMat.isDecal;
+}
+
+bool HIGHOMEGA::RENDER::GroupedRasterSubmission::noBlendOrPostProcessOrDecalFilter(MeshMaterial& curMat)
+{
+	if (curMat.postProcess || (curMat.pipelineFlags.alphaBlending && curMat.pipelineFlags.changedBlendEnable) || curMat.isDecal) return false;
 	return true;
 }
 
@@ -3515,6 +3540,7 @@ void HIGHOMEGA::RENDER::PASSES::ShadowMapScreenClass::Create(TriClass & PostProc
 	if (RTInstance::Enabled() && useHWRTIfAvailable)
 	{
 		rtShaderResourceSet.CreateRT("shaders/rtshadow.rgen.spv", "main", "shaders/rtshadow.rchit.spv", "main", "shaders/rtshadow.rmiss.spv", "main", "shaders/rtalphakey.rahit.spv", "main");
+		rtShaderResourceSet.SetStageSpecializationData(RT_ANYHIT, { "NoDecal", {{0u, 1u}} });
 		tracelet.Make(Instance);
 	}
 	else
@@ -3606,6 +3632,7 @@ void HIGHOMEGA::RENDER::PASSES::ShadowMapScreenClass::Render(GroupedTraceSubmiss
 			tracingResources.emplace_back(RESOURCE_UBO, RT_MISS, 0, 6, shadowMapFarRef->frustum.Buffer);
 			tracingResources.emplace_back(RESOURCE_SSBO, RT_ANYHIT, 1, rtSceneRef.getGeomResources());
 			tracingResources.emplace_back(RESOURCE_SAMPLER, RT_ANYHIT, 2, rtSceneRef.getMaterialResources());
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_ANYHIT, 3, 0, rtSceneRef.getInstancePropertiesBuffer());
 		}
 
 		tracelet.Submit(gatherPassCommonRef->worldPosAttach.getWidth(), gatherPassCommonRef->worldPosAttach.getHeight(), 1, tracingResources, rewriteDescriptoSets, rtShaderResourceSet);
@@ -3939,7 +3966,7 @@ void HIGHOMEGA::RENDER::PASSES::SkyDomeClass::Create(TriClass & Tri, WorldParams
 
 		distantVis[i].Create(i < 6 ? skyCubeMap.getWidth() : ScreenSize.width, i < 6 ? skyCubeMap.getHeight() : ScreenSize.height, skyFrustums[i]);
 		distantVis[i].submission.Add(mountains);
-		distantGather[i].Create(distantVis[i], Tri, skyFrustums[i], true);
+		distantGather[i].Create(distantVis[i], nullptr, Tri, skyFrustums[i], true);
 
 		distantGeomScreenShadow[i].Create(Tri, distantGeomShadowMapNear, distantGeomShadowMapFar, distantGather[i]);
 
@@ -4160,7 +4187,40 @@ void HIGHOMEGA::RENDER::PASSES::VisibilityPassClass::Render()
 	submission.Render();
 }
 
-void HIGHOMEGA::RENDER::PASSES::GatherResolveClass::Create(VisibilityPassClass & VisibilityPass, TriClass & PostProcessTri, FrustumClass & OriginalFrustum, bool simple)
+void HIGHOMEGA::RENDER::PASSES::DecalPassClass::Create(VisibilityPassClass& VisibilityPass, FrustumClass& frustum)
+{
+	submission.Create(Instance);
+	submission.SetClearColor(vec3(0.0f), 0.0f);
+	frustumRef = &frustum;
+
+	decalAlbedo.CreateOffScreenColorAttachment(Instance, R8G8B8A8UN, VisibilityPass.visibilityTriInfo.getWidth(), VisibilityPass.visibilityTriInfo.getHeight(), false, false);
+	decalSpecular.CreateOffScreenColorAttachment(Instance, R8G8B8A8UN, VisibilityPass.visibilityTriInfo.getWidth(), VisibilityPass.visibilityTriInfo.getHeight(), false, false);
+	decalRoughnessSpecularity.CreateOffScreenColorAttachment(Instance, R8G8B8A8UN, VisibilityPass.visibilityTriInfo.getWidth(), VisibilityPass.visibilityTriInfo.getHeight(), false, false);
+	decalNormal.CreateOffScreenColorAttachment(Instance, R8G8B8A8UN, VisibilityPass.visibilityTriInfo.getWidth(), VisibilityPass.visibilityTriInfo.getHeight(), false, false);
+
+	frameBuffer.AddColorAttachment(decalAlbedo);
+	frameBuffer.AddColorAttachment(decalSpecular);
+	frameBuffer.AddColorAttachment(decalRoughnessSpecularity);
+	frameBuffer.AddColorAttachment(decalNormal);
+	frameBuffer.Create(OFF_SCREEN, Instance, Window);
+
+	submission.SetFrameBuffer(frameBuffer);
+
+	shader.Create("shaders/decal.vert.spv", "main", "shaders/decal.frag.spv", "main");
+	shader.AddResource(RESOURCE_UBO, VERTEX | FRAGMENT, 0, 0, decalFrustum.Buffer);
+	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 1, VisibilityPass.depthStencilAttach);
+	submission.SetShader("default", shader);
+}
+
+void HIGHOMEGA::RENDER::PASSES::DecalPassClass::Render()
+{
+	decalFrustum.CopyFromFrustum(*frustumRef);
+	decalFrustum.reverseZ = true;
+	decalFrustum.Update();
+	submission.Render();
+}
+
+void HIGHOMEGA::RENDER::PASSES::GatherResolveClass::Create(VisibilityPassClass& VisibilityPass, DecalPassClass* DecalPass, TriClass& PostProcessTri, FrustumClass& OriginalFrustum, bool simple)
 {
 	submission.SetClearColor(vec3(0.0f), 0.0f);
 	submission.Add(PostProcessTri.triModel);
@@ -4185,6 +4245,13 @@ void HIGHOMEGA::RENDER::PASSES::GatherResolveClass::Create(VisibilityPassClass &
 	shader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
 	shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 1, OriginalFrustum.Buffer);
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 2, VisibilityPass.visibilityTriInfo);
+	if (DecalPass)
+	{
+		shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 3, DecalPass->decalAlbedo);
+		shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, DecalPass->decalSpecular);
+		shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 5, DecalPass->decalRoughnessSpecularity);
+		shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 6, DecalPass->decalNormal);
+	}
 	submission.consumeMatGeomBindings(&VisibilityPass.submission);
 	submission.SetShader("default", shader);
 }
@@ -4361,7 +4428,7 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Render(vec3 & currentViewer)
 			tracingResources.emplace_back(RESOURCE_UBO, RT_RAYGEN, 0, 15, SkyDomeRef->rayleighMieBuf);
 			tracingResources.emplace_back(RESOURCE_SSBO, RT_RCHIT | RT_ANYHIT, 1, rtSceneRef.getGeomResources());
 			tracingResources.emplace_back(RESOURCE_SAMPLER, RT_RCHIT | RT_ANYHIT, 2, rtSceneRef.getMaterialResources());
-			tracingResources.emplace_back(RESOURCE_SSBO, RT_RCHIT, 3, 0, rtSceneRef.getInstancePropertiesBuffer());
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_RCHIT | RT_ANYHIT, 3, 0, rtSceneRef.getInstancePropertiesBuffer());
 
 			tracingResourcesGloss.clear();
 			tracingResourcesGloss.emplace_back(RESOURCE_RT_ACCEL_STRUCT, RT_RAYGEN, 0, 0, rtSceneRef);
@@ -4385,7 +4452,7 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Render(vec3 & currentViewer)
 			tracingResourcesGloss.emplace_back(RESOURCE_SAMPLER, RT_RAYGEN, 0, 18, *blueNoise);
 			tracingResourcesGloss.emplace_back(RESOURCE_SSBO, RT_RCHIT | RT_ANYHIT, 1, rtSceneRef.getGeomResources());
 			tracingResourcesGloss.emplace_back(RESOURCE_SAMPLER, RT_RCHIT | RT_ANYHIT, 2, rtSceneRef.getMaterialResources());
-			tracingResourcesGloss.emplace_back(RESOURCE_SSBO, RT_RCHIT, 3, 0, rtSceneRef.getInstancePropertiesBuffer());
+			tracingResourcesGloss.emplace_back(RESOURCE_SSBO, RT_RCHIT | RT_ANYHIT, 3, 0, rtSceneRef.getInstancePropertiesBuffer());
 		}
 		tracelet.Submit(glossTraceOutput.getWidth(), glossTraceOutput.getHeight(), 1, tracingResources, rewriteDescriptoSets, rtShaderResourceSet);
 		traceletGloss.Submit(glossTraceOutput.getWidth(), glossTraceOutput.getHeight(), 1, tracingResourcesGloss, rewriteDescriptoSets, rtShaderResourceSetGloss);
