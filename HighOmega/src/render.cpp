@@ -131,9 +131,7 @@ void HIGHOMEGA::RENDER::MeshMaterial::BumpClaims()
 
 void HIGHOMEGA::RENDER::MeshMaterial::ReduceClaims()
 {
-	std::string matStringKey = diffName + nrmName + spcName + rghName + hgtName;
 	std::lock_guard<std::mutex> lk(texture_mutex);
-	bool removedASampler = false;
 	if (diffRef)
 	{
 		diffRef->elemCount--;
@@ -142,7 +140,6 @@ void HIGHOMEGA::RENDER::MeshMaterial::ReduceClaims()
 			TextureCache.erase(diffName);
 			diffRef = nullptr;
 			diffName = "";
-			removedASampler = true;
 		}
 	}
 	if (nrmRef)
@@ -153,7 +150,6 @@ void HIGHOMEGA::RENDER::MeshMaterial::ReduceClaims()
 			TextureCache.erase(nrmName);
 			nrmRef = nullptr;
 			nrmName = "";
-			removedASampler = true;
 		}
 	}
 	if (rghRef)
@@ -164,7 +160,6 @@ void HIGHOMEGA::RENDER::MeshMaterial::ReduceClaims()
 			TextureCache.erase(rghName);
 			rghRef = nullptr;
 			rghName = "";
-			removedASampler = true;
 		}
 	}
 	if (hgtRef)
@@ -175,7 +170,6 @@ void HIGHOMEGA::RENDER::MeshMaterial::ReduceClaims()
 			TextureCache.erase(hgtName);
 			hgtRef = nullptr;
 			hgtName = "";
-			removedASampler = true;
 		}
 	}
 	if (spcRef)
@@ -186,18 +180,6 @@ void HIGHOMEGA::RENDER::MeshMaterial::ReduceClaims()
 			TextureCache.erase(spcName);
 			spcRef = nullptr;
 			spcName = "";
-			removedASampler = true;
-		}
-	}
-	if (removedASampler)
-	{
-		std::lock_guard<std::mutex> lk2(GroupedRasterSubmission::globalDSCache_mutex);
-		for (std::pair <GroupedRasterSubmission* const, std::unordered_map <std::string, std::unordered_map <std::string, DescriptorSets *>>> & curSubToAllPSODS : GroupedRasterSubmission::globalDSCache)
-		{
-			if (curSubToAllPSODS.second.find(matStringKey) == curSubToAllPSODS.second.end()) continue;
-			for (std::pair <std::string const, DescriptorSets*>& curAllPSODS : curSubToAllPSODS.second[matStringKey])
-				curAllPSODS.second->SetDirty(true);
-			curSubToAllPSODS.first->redoSubmissionData = true;
 		}
 	}
 }
@@ -354,8 +336,8 @@ HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propB
 		pipelineFlags.blendEnable = true;
 		pipelineFlags.alphaBlending = true;
 		pipelineFlags.colorBlending = true;
-		pipelineFlags.srcAlphaFactor = FACTOR_SRC_ALPHA;
-		pipelineFlags.dstAlphaFactor = FACTOR_ONE_MINUS_SRC_ALPHA;
+		pipelineFlags.srcAlphaFactor = FACTOR_ONE;
+		pipelineFlags.dstAlphaFactor = FACTOR_ONE;
 		pipelineFlags.srcColorFactor = FACTOR_SRC_ALPHA;
 		pipelineFlags.dstColorFactor = FACTOR_ONE_MINUS_SRC_ALPHA;
 		pipelineFlags.alphaBlendOp = BLEND_ADD;
@@ -612,6 +594,42 @@ void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderIte
 		if (cacheNames.size() > 0) distFieldCacheNames.push_back(cacheNames[i]);
 		curPair.item->sdf->ClearColors(clearList, ImageClearColor(vec3(0.0f), 0.0f));
 
+		std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET> uniqueSamplers;
+		for (std::pair <const MeshMaterial, std::list<GeometryClass>>& matGeomPair : curPair.item->MaterialGeomMap)
+		{
+			MeshMaterial curMat = matGeomPair.first;
+			if (curPair.filterFunction && !curPair.filterFunction(curMat)) continue;
+			for (GeometryClass& curGeom : matGeomPair.second)
+			{
+				if (uniqueSamplers.find(&curMat.diffRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.diffRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.nrmRef && uniqueSamplers.find(&curMat.nrmRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.nrmRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.rghRef && uniqueSamplers.find(&curMat.rghRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.rghRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.hgtRef && uniqueSamplers.find(&curMat.hgtRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.hgtRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.spcRef && uniqueSamplers.find(&curMat.spcRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.spcRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+			}
+		}
+
+		struct ImgRefOrder
+		{
+			ImageClass* img;
+			unsigned int order;
+		};
+		std::vector<ImgRefOrder> ImgRefOrderVector;
+		std::vector<ShaderResource> MaterialBindings;
+		for (const std::pair<ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>& curSampler : uniqueSamplers)
+			ImgRefOrderVector.push_back(ImgRefOrder{ curSampler.first, curSampler.second });
+		std::sort(ImgRefOrderVector.begin(), ImgRefOrderVector.end(), [](const ImgRefOrder& lhs, const ImgRefOrder& rhs) {
+			return lhs.order <= rhs.order;
+			});
+		for (ImgRefOrder& curImgRefOrder : ImgRefOrderVector)
+			MaterialBindings.emplace_back(RESOURCE_SAMPLER, COMPUTE, 1, 0, *curImgRefOrder.img);
+
+		HIGHOMEGA_TEXTURE_OFFSET textureOffsets[6];
 		for (std::pair <const MeshMaterial, std::list<GeometryClass>> & matGeomPair : curPair.item->MaterialGeomMap)
 		{
 			MeshMaterial curMat = matGeomPair.first;
@@ -620,15 +638,17 @@ void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<SubmittedRenderIte
 			{
 				unsigned int triCount = curGeom.getVertBuffer().getSize() / sizeof(RasterVertex);
 				voxelizeParams.imgMinTriCount[3] = *((float*)&triCount);
-				GroupedRenderSubmission::CompileInstanceProperties(voxelizeParams.instProps, curMat);
+				textureOffsets[0] = 0xFF;
+				textureOffsets[1] = textureOffsets[3] = textureOffsets[5] = uniqueSamplers[&matGeomPair.first.diffRef->elem];
+				if (matGeomPair.first.rghRef) textureOffsets[3] = uniqueSamplers[&matGeomPair.first.rghRef->elem];
+				if (matGeomPair.first.spcRef) textureOffsets[5] = uniqueSamplers[&matGeomPair.first.spcRef->elem];
+				GroupedRenderSubmission::CompileInstanceProperties(voxelizeParams.instProps, curMat, textureOffsets);
 				allVoxelizeParamBufs.push_back(new BufferClass(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &voxelizeParams, (unsigned int)sizeof(voxelizeParams)));
 				srsSet.push_back(new ShaderResourceSet);
 				srsSet.back()->AddResource(RESOURCE_UBO, COMPUTE, 0, 0, *allVoxelizeParamBufs.back());
 				srsSet.back()->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 1, *curPair.item->sdf);
-				srsSet.back()->AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 2, matGeomPair.first.diffRef->elem);
-				srsSet.back()->AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 3, matGeomPair.first.spcRef ? matGeomPair.first.spcRef->elem : matGeomPair.first.diffRef->elem);
-				srsSet.back()->AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 4, matGeomPair.first.rghRef ? matGeomPair.first.rghRef->elem : matGeomPair.first.diffRef->elem);
-				srsSet.back()->AddResource(RESOURCE_SSBO, COMPUTE, 0, 5, curGeom.getVertBuffer());
+				srsSet.back()->AddResource(RESOURCE_SSBO, COMPUTE, 0, 2, curGeom.getVertBuffer());
+				srsSet.back()->AddResource(RESOURCE_SAMPLER, COMPUTE, 1, MaterialBindings);
 				srsSet.back()->Create("shaders/voxelize.comp.spv", "main");
 				std::stringstream ptrStream;
 				ptrStream << &curGeom;
@@ -1300,34 +1320,37 @@ unsigned long long HIGHOMEGA::RENDER::GroupedTraceSubmission::SceneID()
 	{
 		rtScene.RemoveAll(curChangedItem);
 
-		InstanceProperties curProps;
 		std::unordered_map<MeshMaterial, std::list<GeometryClass>, MeshMaterialHash> & curItemMatGeomMap = allSubmittedItems[curChangedItem].item->MaterialGeomMap;
-		std::vector <ImageClass *> materialCollection;
-		materialCollection.reserve(5);
 		for (std::unordered_map<MeshMaterial, std::list<GeometryClass>>::iterator it = curItemMatGeomMap.begin(); it != curItemMatGeomMap.end(); ++it)
 		{
 			MeshMaterial itFirst = it->first;
 			if (!allSubmittedItems[curChangedItem].filterFunction(itFirst)) continue;
 
-			materialCollection.clear();
-			materialCollection.push_back(&itFirst.diffRef->elem);
+			std::function<void(InstanceProperties&, std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>&)> compInstPropsCallback = [curMat = itFirst](InstanceProperties& instProps, std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>& uniqueSamplers) -> void {
+				if (uniqueSamplers.find(&curMat.diffRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.diffRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.nrmRef && uniqueSamplers.find(&curMat.nrmRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.nrmRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.rghRef && uniqueSamplers.find(&curMat.rghRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.rghRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.hgtRef && uniqueSamplers.find(&curMat.hgtRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.hgtRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.spcRef && uniqueSamplers.find(&curMat.spcRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.spcRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
 
-			if (itFirst.nrmRef) materialCollection.push_back(&itFirst.nrmRef->elem);
-			else materialCollection.push_back(&itFirst.diffRef->elem);
+				HIGHOMEGA_TEXTURE_OFFSET textureOffsets[6];
+				textureOffsets[0] = 0xFF;
+				textureOffsets[1] = textureOffsets[2] = textureOffsets[3] = textureOffsets[4] = textureOffsets[5] = uniqueSamplers[&curMat.diffRef->elem];
+				if (curMat.nrmRef) textureOffsets[2] = uniqueSamplers[&curMat.nrmRef->elem];
+				if (curMat.rghRef) textureOffsets[3] = uniqueSamplers[&curMat.rghRef->elem];
+				if (curMat.hgtRef) textureOffsets[4] = uniqueSamplers[&curMat.hgtRef->elem];
+				if (curMat.spcRef) textureOffsets[5] = uniqueSamplers[&curMat.spcRef->elem];
 
-			if (itFirst.rghRef) materialCollection.push_back(&itFirst.rghRef->elem);
-			else materialCollection.push_back(&itFirst.diffRef->elem);
-
-			if (itFirst.hgtRef) materialCollection.push_back(&itFirst.hgtRef->elem);
-			else materialCollection.push_back(&itFirst.diffRef->elem);
-
-			if (itFirst.spcRef) materialCollection.push_back(&itFirst.spcRef->elem);
-			else materialCollection.push_back(&itFirst.diffRef->elem);
-
-			CompileInstanceProperties(curProps, itFirst);
+				CompileInstanceProperties(instProps, curMat, textureOffsets);
+			};
 
 			for (std::list<GeometryClass>::iterator it2 = it->second.begin(); it2 != it->second.end(); it2++)
-				rtScene.Add(curChangedItem, materialCollection, (*it2).getRTGeom(), curProps, Instance);
+				rtScene.Add(curChangedItem, compInstPropsCallback, (*it2).getRTGeom(), Instance);
 		}
 	}
 	changedItems.clear();
@@ -1344,7 +1367,6 @@ SubmittedRenderItem HIGHOMEGA::RENDER::GroupedTraceSubmission::Add(GraphicsModel
 		return retVal;
 	}
 
-	InstanceProperties curProps;
 	SubmittedRenderItem retVal;
 	retVal.producer = this;
 	retVal.item = &inpModel;
@@ -1352,33 +1374,37 @@ SubmittedRenderItem HIGHOMEGA::RENDER::GroupedTraceSubmission::Add(GraphicsModel
 	retVal.filterFunction = inpFilterFunction;
 
 	std::unordered_map<MeshMaterial, std::list<GeometryClass>, MeshMaterialHash> & curItemMatGeomMap = inpModel.MaterialGeomMap;
-	std::vector <ImageClass *> materialCollection;
-	materialCollection.reserve(5);
 	for (std::unordered_map<MeshMaterial, std::list<GeometryClass>>::iterator it = curItemMatGeomMap.begin(); it != curItemMatGeomMap.end(); ++it)
 	{
 		MeshMaterial itFirst = it->first;
 		if (!inpFilterFunction(itFirst)) continue;
 
-		materialCollection.clear();
-		materialCollection.push_back(&itFirst.diffRef->elem);
+		std::function<void(InstanceProperties&, std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>&)> compInstPropsCallback = [curMat = itFirst](InstanceProperties& instProps, std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>& uniqueSamplers) -> void {
+			if (uniqueSamplers.find(&curMat.diffRef->elem) == uniqueSamplers.end())
+				uniqueSamplers[&curMat.diffRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+			if (curMat.nrmRef && uniqueSamplers.find(&curMat.nrmRef->elem) == uniqueSamplers.end())
+				uniqueSamplers[&curMat.nrmRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+			if (curMat.rghRef && uniqueSamplers.find(&curMat.rghRef->elem) == uniqueSamplers.end())
+				uniqueSamplers[&curMat.rghRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+			if (curMat.hgtRef && uniqueSamplers.find(&curMat.hgtRef->elem) == uniqueSamplers.end())
+				uniqueSamplers[&curMat.hgtRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+			if (curMat.spcRef && uniqueSamplers.find(&curMat.spcRef->elem) == uniqueSamplers.end())
+				uniqueSamplers[&curMat.spcRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
 
-		if (itFirst.nrmRef) materialCollection.push_back(&itFirst.nrmRef->elem);
-		else materialCollection.push_back(&itFirst.diffRef->elem);
+			HIGHOMEGA_TEXTURE_OFFSET textureOffsets[6];
+			textureOffsets[0] = 0xFF;
+			textureOffsets[1] = textureOffsets[2] = textureOffsets[3] = textureOffsets[4] = textureOffsets[5] = uniqueSamplers[&curMat.diffRef->elem];
+			if (curMat.nrmRef) textureOffsets[2] = uniqueSamplers[&curMat.nrmRef->elem];
+			if (curMat.rghRef) textureOffsets[3] = uniqueSamplers[&curMat.rghRef->elem];
+			if (curMat.hgtRef) textureOffsets[4] = uniqueSamplers[&curMat.hgtRef->elem];
+			if (curMat.spcRef) textureOffsets[5] = uniqueSamplers[&curMat.spcRef->elem];
 
-		if (itFirst.rghRef) materialCollection.push_back(&itFirst.rghRef->elem);
-		else materialCollection.push_back(&itFirst.diffRef->elem);
-
-		if (itFirst.hgtRef) materialCollection.push_back(&itFirst.hgtRef->elem);
-		else materialCollection.push_back(&itFirst.diffRef->elem);
-
-		if (itFirst.spcRef) materialCollection.push_back(&itFirst.spcRef->elem);
-		else materialCollection.push_back(&itFirst.diffRef->elem);
-
-		CompileInstanceProperties(curProps, itFirst);
+			CompileInstanceProperties(instProps, curMat, textureOffsets);
+		};
 
 		for (std::list<GeometryClass>::iterator it2 = it->second.begin(); it2 != it->second.end(); it2++)
 		{
-			rtScene.Add(retVal.itemId, materialCollection, (*it2).getRTGeom(), curProps, Instance);
+			rtScene.Add(retVal.itemId, compInstPropsCallback, (*it2).getRTGeom(), Instance);
 			(*it2).notifySubmissions[this] = retVal.itemId;
 		}
 	}
@@ -1448,7 +1474,6 @@ unsigned long long HIGHOMEGA::RENDER::GroupedBVHSubmission::SceneID()
 
 		mortonParams.resize(instanceCountAligned);
 		sourceGeom.reserve(instanceCountAligned);
-		sourceMats.reserve(instanceCountAligned * 5);
 		sourceGeom.clear();
 		sourceMats.clear();
 		trisComp.resize(triCountAligned);
@@ -1456,6 +1481,8 @@ unsigned long long HIGHOMEGA::RENDER::GroupedBVHSubmission::SceneID()
 
 		unsigned int triOffset = 0, curInstanceIndex = 0;
 		unsigned int maxTriCount = 0;
+
+		std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET> uniqueSamplers;
 		for (std::pair<const unsigned long long, SubmittedRenderItem> & curSubmittedItem : allSubmittedItems)
 			for (std::pair<const MeshMaterial, std::list<GeometryClass>> & curMatGeomPairing : curSubmittedItem.second.item->MaterialGeomMap)
 			{
@@ -1466,15 +1493,16 @@ unsigned long long HIGHOMEGA::RENDER::GroupedBVHSubmission::SceneID()
 					unsigned int curTriCount = curGeom.getVertBuffer().getSize() / (sizeof(RasterVertex) * 3);
 					sourceGeom.emplace_back(RESOURCE_SSBO, COMPUTE, 1, 0, curGeom.getVertBuffer());
 
-					sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.diffRef->elem);
-					if (curMat.nrmRef) sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.nrmRef->elem);
-					else sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.diffRef->elem);
-					if (curMat.rghRef) sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.rghRef->elem);
-					else sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.diffRef->elem);
-					if (curMat.hgtRef) sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.hgtRef->elem);
-					else sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.diffRef->elem);
-					if (curMat.spcRef) sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.spcRef->elem);
-					else sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, 0, curMat.diffRef->elem);
+					if (uniqueSamplers.find(&curMat.diffRef->elem) == uniqueSamplers.end())
+						uniqueSamplers[&curMat.diffRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+					if (curMat.nrmRef && uniqueSamplers.find(&curMat.nrmRef->elem) == uniqueSamplers.end())
+						uniqueSamplers[&curMat.nrmRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+					if (curMat.rghRef && uniqueSamplers.find(&curMat.rghRef->elem) == uniqueSamplers.end())
+						uniqueSamplers[&curMat.rghRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+					if (curMat.hgtRef && uniqueSamplers.find(&curMat.hgtRef->elem) == uniqueSamplers.end())
+						uniqueSamplers[&curMat.hgtRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+					if (curMat.spcRef && uniqueSamplers.find(&curMat.spcRef->elem) == uniqueSamplers.end())
+						uniqueSamplers[&curMat.spcRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
 
 					mortonParams[curInstanceIndex].OffsetLen[0] = triOffset;
 					mortonParams[curInstanceIndex].OffsetLen[1] = curTriCount;
@@ -1504,6 +1532,21 @@ unsigned long long HIGHOMEGA::RENDER::GroupedBVHSubmission::SceneID()
 					}
 				}
 			}
+
+		struct ImgRefOrder
+		{
+			ImageClass* img;
+			unsigned int order;
+		};
+		std::vector<ImgRefOrder> ImgRefOrderVector;
+		for (const std::pair<ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>& curSampler : uniqueSamplers)
+			ImgRefOrderVector.push_back(ImgRefOrder{ curSampler.first, curSampler.second });
+		std::sort(ImgRefOrderVector.begin(), ImgRefOrderVector.end(), [](const ImgRefOrder& lhs, const ImgRefOrder& rhs) {
+			return lhs.order <= rhs.order;
+		});
+		for (ImgRefOrder& curImgRefOrder : ImgRefOrderVector)
+			sourceMats.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 5, 0, *curImgRefOrder.img);
+
 		buildParams.mapMinTriCount[3] = *((float *)(&totalSceneTriCount));
 
 		if (buildParamsBuf.getSize() == 0)
@@ -1545,12 +1588,21 @@ unsigned long long HIGHOMEGA::RENDER::GroupedBVHSubmission::SceneID()
 			}
 			instProps.resize(totalInstanceCount);
 			unsigned int instancePropCounter = 0u;
+			HIGHOMEGA_TEXTURE_OFFSET textureOffsets[6];
 			for (std::pair<const unsigned long long, SubmittedRenderItem> & curSubmittedItem : allSubmittedItems)
 				for (std::pair<const MeshMaterial, std::list<GeometryClass>> & curMatGeomPairing : curSubmittedItem.second.item->MaterialGeomMap)
 				{
 					MeshMaterial curMat = curMatGeomPairing.first;
 					if (!curSubmittedItem.second.filterFunction(curMat)) continue;
-					CompileInstanceProperties(instProps[instancePropCounter++], curMat);
+
+					textureOffsets[0] = 0xFF;
+					textureOffsets[1] = textureOffsets[2] = textureOffsets[3] = textureOffsets[4] = textureOffsets[5] = uniqueSamplers[&curMat.diffRef->elem];
+					if (curMat.nrmRef) textureOffsets[2] = uniqueSamplers[&curMat.nrmRef->elem];
+					if (curMat.rghRef) textureOffsets[3] = uniqueSamplers[&curMat.rghRef->elem];
+					if (curMat.hgtRef) textureOffsets[4] = uniqueSamplers[&curMat.hgtRef->elem];
+					if (curMat.spcRef) textureOffsets[5] = uniqueSamplers[&curMat.spcRef->elem];
+
+					CompileInstanceProperties(instProps[instancePropCounter++], curMat, textureOffsets);
 				}
 			instBuf.UploadSubData(0, instProps.data(), totalInstanceCount * sizeof(InstanceProperties));
 		}
@@ -1986,7 +2038,7 @@ void HIGHOMEGA::RENDER::GroupedSDFBVHSubmission::Remove(SubmittedRenderItem & in
 	allSubmittedItems.erase(inpSubmittedRenderItem.itemId);
 }
 
-void HIGHOMEGA::RENDER::GroupedRenderSubmission::CompileInstanceProperties(InstanceProperties & outProp, const MeshMaterial & inpMaterial)
+void HIGHOMEGA::RENDER::GroupedRenderSubmission::CompileInstanceProperties(InstanceProperties & outProp, const MeshMaterial & inpMaterial, HIGHOMEGA_TEXTURE_OFFSET textureOffsets[6])
 {
 	// Build the per-instance data we're sending to the shader!
 
@@ -2032,36 +2084,32 @@ void HIGHOMEGA::RENDER::GroupedRenderSubmission::CompileInstanceProperties(Insta
 	if (inpMaterial.isDecal)
 		attribs0 |= 0x00000200;
 
-	outProp.attribs[0] = *((float *)&attribs0);
-
-	// Player ID
-	outProp.attribs[1] = *((float *)&inpMaterial.playerId);
+	outProp.attribs1[0] = *((float *)&attribs0);
 
 	// emissivity
-	outProp.attribs[2] = inpMaterial.emissivity;
+	outProp.attribs1[1] = inpMaterial.emissivity;
 
 	// refractiveIndex
-	outProp.attribs[3] = inpMaterial.refractiveIndex;
+	outProp.attribs1[2] = inpMaterial.refractiveIndex;
 
 	// Total u offset
-	outProp.attribs[4] = inpMaterial.uvOffset.x;
+	outProp.attribs2[0] = inpMaterial.uvOffset.x;
 
 	// Total v offset
-	outProp.attribs[5] = inpMaterial.uvOffset.y;
+	outProp.attribs2[1] = inpMaterial.uvOffset.y;
 
 	// Vertex displacement height factor
-	outProp.attribs[6] = inpMaterial.heightMapDisplaceFactor;
+	outProp.attribs2[2] = inpMaterial.heightMapDisplaceFactor;
 
-	// Subdivision amount for tessellation
-	outProp.attribs[7] = inpMaterial.subDivAmount;
+	// Player ID (we're not going to factor in most tessellation work into vis determination)
+	outProp.attribs2[3] = *((float*)&inpMaterial.playerId);
+
+	memcpy(outProp.textureOffsets, textureOffsets, sizeof(outProp.textureOffsets));
 }
 
 HIGHOMEGA::RENDER::GroupedRenderSubmission::GroupedRenderSubmission()
 {
 }
-
-std::unordered_map <GroupedRasterSubmission*, std::unordered_map <std::string, std::unordered_map <std::string, DescriptorSets*>>> GroupedRasterSubmission::globalDSCache;
-std::mutex GroupedRasterSubmission::globalDSCache_mutex;
 
 void HIGHOMEGA::RENDER::GroupedRasterSubmission::DestroySubmissionData()
 {
@@ -2133,7 +2181,6 @@ HIGHOMEGA::RENDER::GroupedRasterSubmission::GroupedRasterSubmission()
 	requestsBVH = false;
 	doesCulling = false;
 	Setup_HiZ = false;
-	recordMatGeomBindings = false;
 	takenMatGeomBindings = nullptr;
 	cmdRecordId = 0lu;
 	MipChainPass1_HiZ = MipChainPass2_HiZ = nullptr;
@@ -2148,11 +2195,9 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Create(InstanceClass & ptrToIns
 
 HIGHOMEGA::RENDER::GroupedRasterSubmission::~GroupedRasterSubmission()
 {
-	{std::lock_guard<std::mutex>lk(globalDSCache_mutex);
-	for (std::pair <const std::string, std::unordered_map <std::string, DescriptorSets*>>& curAllPSODS : globalDSCache[this])
-		for (std::pair <const std::string, DescriptorSets*>& curDS : curAllPSODS.second)
-			delete curDS.second;
-	globalDSCache.erase(this);}
+	for (std::pair<const std::string, DescriptorSets*>& curDS : DSCache)
+		delete curDS.second;
+	DSCache.clear();
 	if (cullingCompute) delete cullingCompute;
 	if (cullingResourceSet) delete cullingResourceSet;
 	if (MipChainPass1_HiZ) delete MipChainPass1_HiZ;
@@ -2402,11 +2447,6 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::doCulling(FrustumClass &inpFrus
 	Rasterlet.doesCulling = doesCulling = true;
 }
 
-void HIGHOMEGA::RENDER::GroupedRasterSubmission::keepMatGeomBindings()
-{
-	recordMatGeomBindings = true;
-}
-
 void HIGHOMEGA::RENDER::GroupedRasterSubmission::consumeMatGeomBindings(GroupedRasterSubmission *inpConsumeMatGeomBindingsFrom)
 {
 	takenMatGeomBindings = inpConsumeMatGeomBindingsFrom;
@@ -2518,26 +2558,48 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 		});
 		SSBOdata.resize(instanceCount);
 		unsigned int instCounter = 0;
+		std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET> uniqueSamplers;
+		HIGHOMEGA_TEXTURE_OFFSET textureOffsets[6];
 		for (MaterialGeomPairing & curMatGeomPairing : MaterialGeomPairings)
 			for (GeometryClass * curGeom : *curMatGeomPairing.geom)
 			{
-				if (recordMatGeomBindings)
-				{
-					MeshMaterial & curMat = curMatGeomPairing.mat;
-					MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.diffRef->elem);
-					if (curMat.nrmRef) MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.nrmRef->elem);
-					else MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.diffRef->elem);
-					if (curMat.rghRef) MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.rghRef->elem);
-					else MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.diffRef->elem);
-					if (curMat.hgtRef) MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.hgtRef->elem);
-					else MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.diffRef->elem);
-					if (curMat.spcRef) MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.spcRef->elem);
-					else MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, 0, curMat.diffRef->elem);
+				MeshMaterial & curMat = curMatGeomPairing.mat;
 
-					GeomBindings.emplace_back(RESOURCE_SSBO, FRAGMENT, 3, 0, curGeom->getVertBuffer());
-				}
-				CompileInstanceProperties(SSBOdata[instCounter++], curMatGeomPairing.mat);
+				if (uniqueSamplers.find(&curMat.diffRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.diffRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.nrmRef && uniqueSamplers.find(&curMat.nrmRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.nrmRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.rghRef && uniqueSamplers.find(&curMat.rghRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.rghRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.hgtRef && uniqueSamplers.find(&curMat.hgtRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.hgtRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+				if (curMat.spcRef && uniqueSamplers.find(&curMat.spcRef->elem) == uniqueSamplers.end())
+					uniqueSamplers[&curMat.spcRef->elem] = (HIGHOMEGA_TEXTURE_OFFSET)uniqueSamplers.size();
+
+				textureOffsets[0] = 0xFF;
+				textureOffsets[1] = textureOffsets[2] = textureOffsets[3] = textureOffsets[4] = textureOffsets[5] = uniqueSamplers[&curMat.diffRef->elem];
+				if (curMat.nrmRef) textureOffsets[2] = uniqueSamplers[&curMat.nrmRef->elem];
+				if (curMat.rghRef) textureOffsets[3] = uniqueSamplers[&curMat.rghRef->elem];
+				if (curMat.hgtRef) textureOffsets[4] = uniqueSamplers[&curMat.hgtRef->elem];
+				if (curMat.spcRef) textureOffsets[5] = uniqueSamplers[&curMat.spcRef->elem];
+
+				GeomBindings.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 0, curGeom->getVertBuffer());
+				CompileInstanceProperties(SSBOdata[instCounter++], curMatGeomPairing.mat, textureOffsets);
 			}
+
+		struct ImgRefOrder
+		{
+			ImageClass* img;
+			unsigned int order;
+		};
+		std::vector<ImgRefOrder> ImgRefOrderVector;
+		for (const std::pair<ImageClass*, HIGHOMEGA_TEXTURE_OFFSET> & curSampler : uniqueSamplers)
+			ImgRefOrderVector.push_back(ImgRefOrder{ curSampler.first, curSampler.second });
+		std::sort(ImgRefOrderVector.begin(), ImgRefOrderVector.end(), [](const ImgRefOrder& lhs, const ImgRefOrder& rhs) {
+			return lhs.order <= rhs.order;
+		});
+		for (ImgRefOrder & curImgRefOrder : ImgRefOrderVector)
+			MaterialBindings.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 0, *curImgRefOrder.img);
 
 		cmdRecordId = mersenneTwister64BitPRNG();
 
@@ -2558,14 +2620,6 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 				SSBO.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_SSBO, Instance, nullptr, (unsigned int)sizeof(InstanceProperties));
 				allResourcesChanged = true;
 			}
-		}
-
-		if (allResourcesChanged) {
-			std::lock_guard<std::mutex>lk(globalDSCache_mutex);
-			for (std::pair <std::string const, std::unordered_map <std::string, DescriptorSets*>>& curSubToAllPSODS : GroupedRasterSubmission::globalDSCache[this])
-				for (std::pair <std::string const, DescriptorSets*>& curAllPSODS : curSubToAllPSODS.second)
-					curAllPSODS.second->SetDirty(true);
-			allResourcesChanged = false;
 		}
 
 		if (doesCulling)
@@ -2593,6 +2647,9 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 		PipelineFlags pFlags;
 		std::vector <ShaderResource> shaderResources;
 		shaderResources.reserve(50);
+		for (std::pair<const std::string, DescriptorSets*>& curDS : DSCache)
+			delete curDS.second;
+		DSCache.clear();
 		for (MaterialGeomPairing & curMatGeomPairing : MaterialGeomPairings)
 		{
 			pFlags = defaultPipelineFlags;
@@ -2626,35 +2683,28 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 			}
 
 			shaderResources.clear();
-			shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 0, curMat.diffRef->elem);
-			if (curMat.nrmRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 1, curMat.nrmRef->elem);
-			else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 1, curMat.diffRef->elem);
-			if (curMat.rghRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 2, curMat.rghRef->elem);
-			else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 2, curMat.diffRef->elem);
-			if (curMat.hgtRef) shaderResources.emplace_back(RESOURCE_SAMPLER, TESS_EVAL, 1, 3, curMat.hgtRef->elem);
-			else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 3, curMat.diffRef->elem);
-			if (curMat.spcRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 4, curMat.spcRef->elem);
-			else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 4, curMat.diffRef->elem);
-			shaderResources.emplace_back(RESOURCE_SSBO, VERTEX, 1, 5, SSBO);
+			shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT | TESS_EVAL, 1, MaterialBindings);
+			shaderResources.emplace_back(RESOURCE_SSBO, VERTEX, 2, GeomBindings);
+			shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT | TESS_CTRL | TESS_EVAL, 3, 0, SSBO);
 			if (requestsBVH)
 			{
-				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 0, sourceBVH->nodesBuf);
-				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 1, sourceBVH->trisCompressedBuf);
-				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 2, sourceBVH->instBuf);
-				shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, sourceBVH->sourceMats);
-				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, sourceBVH->sourceGeom);
+				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, 0, sourceBVH->nodesBuf);
+				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, 1, sourceBVH->trisCompressedBuf);
+				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, 2, sourceBVH->instBuf);
+				shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 5, sourceBVH->sourceMats);
+				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 6, sourceBVH->sourceGeom);
 			}
 			if (requestsSDFBVH)
 			{
-				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 0, sourceSDFBVHSubmission->nodesBuf);
-				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 1, sourceSDFBVHSubmission->invMatBuf);
-				shaderResources.emplace_back(RESOURCE_IMAGE_STORE, FRAGMENT, 3, sourceSDFBVHSubmission->SDFs);
+				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, 0, sourceSDFBVHSubmission->nodesBuf);
+				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, 1, sourceSDFBVHSubmission->invMatBuf);
+				shaderResources.emplace_back(RESOURCE_IMAGE_STORE, FRAGMENT, 5, sourceSDFBVHSubmission->SDFs);
 			}
 			if (takenMatGeomBindings)
 			{
-				shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, takenMatGeomBindings->MaterialBindings);
-				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 3, takenMatGeomBindings->GeomBindings);
-				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, 0, takenMatGeomBindings->SSBO);
+				shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 4, takenMatGeomBindings->MaterialBindings);
+				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 5, takenMatGeomBindings->GeomBindings);
+				shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 6, 0, takenMatGeomBindings->SSBO);
 			}
 			std::string selShaderName = curMat.shaderName;
 			if (shaders.find(curMat.shaderName) == shaders.end()) {
@@ -2679,61 +2729,16 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 				RasterPSODSL = &globalRaster_PSO_DSL_Cache[rasterPSOKey];
 			}
 			
-			DescriptorSets *DSPtr = nullptr;
+			if (DSCache.find(rasterPSOKey) == DSCache.end())
 			{
-				std::lock_guard<std::mutex>lk(globalDSCache_mutex);
-				std::string matStringKey = curMatGeomPairing.mat.diffName + curMatGeomPairing.mat.nrmName + curMatGeomPairing.mat.spcName + curMatGeomPairing.mat.rghName + curMatGeomPairing.mat.hgtName;
-				if (globalDSCache[this].find(matStringKey) == globalDSCache[this].end() || globalDSCache[this][matStringKey].find(rasterPSOKey) == globalDSCache[this][matStringKey].end())
-				{
-					globalDSCache[this][matStringKey][rasterPSOKey] = new DescriptorSets(RasterPSODSL->DSL);
-					globalDSCache[this][matStringKey][rasterPSOKey]->WriteDescriptorSets(shaderResources);
-				}
-				else if (globalDSCache[this][matStringKey][rasterPSOKey]->GetDirty())
-				{
-					if (curResourcesRequested == resourcesRequested)
-					{
-						shaderResources.clear();
-						shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 0, curMat.diffRef->elem);
-						if (curMat.nrmRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 1, curMat.nrmRef->elem);
-						else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 1, curMat.diffRef->elem);
-						if (curMat.rghRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 2, curMat.rghRef->elem);
-						else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 2, curMat.diffRef->elem);
-						if (curMat.hgtRef) shaderResources.emplace_back(RESOURCE_SAMPLER, TESS_EVAL, 1, 3, curMat.hgtRef->elem);
-						else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 3, curMat.diffRef->elem);
-						if (curMat.spcRef) shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 1, 4, curMat.spcRef->elem);
-						else shaderResources.emplace_back(RESOURCE_SAMPLER, ALL, 1, 4, curMat.diffRef->elem);
-						shaderResources.emplace_back(RESOURCE_SSBO, VERTEX, 1, 5, SSBO);
-						if (requestsBVH)
-						{
-							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 0, sourceBVH->nodesBuf);
-							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 1, sourceBVH->trisCompressedBuf);
-							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 2, sourceBVH->instBuf);
-							shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 3, sourceBVH->sourceMats);
-							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, sourceBVH->sourceGeom);
-						}
-						if (requestsSDFBVH)
-						{
-							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 0, sourceSDFBVHSubmission->nodesBuf);
-							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 2, 1, sourceSDFBVHSubmission->invMatBuf);
-							shaderResources.emplace_back(RESOURCE_IMAGE_STORE, FRAGMENT, 3, sourceSDFBVHSubmission->SDFs);
-						}
-						if (takenMatGeomBindings)
-						{
-							shaderResources.emplace_back(RESOURCE_SAMPLER, FRAGMENT, 2, takenMatGeomBindings->MaterialBindings);
-							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 3, takenMatGeomBindings->GeomBindings);
-							shaderResources.emplace_back(RESOURCE_SSBO, FRAGMENT, 4, 0, takenMatGeomBindings->SSBO);
-						}
-
-						globalDSCache[this][matStringKey][rasterPSOKey]->UpdateDescriptorSets(shaderResources);
-					}
-					else
-					{
-						globalDSCache[this][matStringKey][rasterPSOKey]->RewriteDescriptorSets(shaderResources);
-					}
-					globalDSCache[this][matStringKey][rasterPSOKey]->SetDirty(false);
-				}
-				DSPtr = globalDSCache[this][matStringKey][rasterPSOKey];
+				DSCache[rasterPSOKey] = new DescriptorSets(RasterPSODSL->DSL);
+				DSCache[rasterPSOKey]->WriteDescriptorSets(shaderResources);
 			}
+			else
+			{
+				DSCache[rasterPSOKey]->RewriteDescriptorSets(shaderResources);
+			}
+			DescriptorSets* DSPtr = DSCache[rasterPSOKey];
 			resourcesRequested = curResourcesRequested;
 			PSO_DSL_DS_GeomPairing curPairing;
 			curPairing.PSO_DSL = RasterPSODSL;
@@ -2848,10 +2853,7 @@ void HIGHOMEGA::RENDER::ComputeSubmission::MakeDispatch(InstanceClass & ptrToIns
 	}
 	else
 	{
-		if (curResourcesRequested != resourcesRequested)
-			dispatches[inpName].DS->RewriteDescriptorSets(inpShader.getAdditionalResources());
-		else
-			dispatches[inpName].DS->UpdateDescriptorSets(inpShader.getAdditionalResources());
+		dispatches[inpName].DS->RewriteDescriptorSets(inpShader.getAdditionalResources());
 	}
 	resourcesRequested = curResourcesRequested;
 	dispatches[inpName].curState = &inpShader;
@@ -3540,8 +3542,7 @@ void HIGHOMEGA::RENDER::PASSES::ShadowMapScreenClass::Create(TriClass & PostProc
 
 	if (RTInstance::Enabled() && useHWRTIfAvailable)
 	{
-		rtShaderResourceSet.CreateRT("shaders/rtshadow.rgen.spv", "main", "shaders/rtshadow.rchit.spv", "main", "shaders/rtshadow.rmiss.spv", "main", "shaders/rtalphakey.rahit.spv", "main");
-		rtShaderResourceSet.SetStageSpecializationData(RT_ANYHIT, { "NoDecal", {{0u, 1u}} });
+		rtShaderResourceSet.CreateRT("shaders/rtshadow.rgen.spv", "main", "shaders/rtshadow.rchit.spv", "main", "shaders/rtshadow.rmiss.spv", "main", "shaders/rtshadowalphakey.rahit.spv", "main");
 		tracelet.Make(Instance);
 	}
 	else
@@ -3599,13 +3600,12 @@ void HIGHOMEGA::RENDER::PASSES::ShadowMapScreenClass::Create(TriClass & PostProc
 	shaderH.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 1, GatherPass.worldPosAttach);
 	shaderH.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 2, shadowMapScreen);
 	shaderH.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 3, blurHAttach);
-	shaderH.AddResource(RESOURCE_UBO, FRAGMENT, 0, 4, shadowPropsBuf);
 
 	shaderV.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
 	shaderV.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 1, GatherPass.worldPosAttach);
 	shaderV.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 2, blurHAttach);
 	shaderV.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 3, shadowMapScreen);
-	shaderV.AddResource(RESOURCE_UBO, FRAGMENT, 0, 4, shadowPropsBuf);
+	shaderV.SetStageSpecializationData(FRAGMENT, { "VertPass", {{0u, 0u}, {1u, 1u}} });
 
 	submissionH.SetShader("default", shaderH);
 
@@ -4184,7 +4184,6 @@ void HIGHOMEGA::RENDER::PASSES::VisibilityPassClass::Render()
 	visFrustum.reverseZ = true;
 	visFrustum.Update();
 	submission.doCulling(visFrustum, GroupedRasterSubmission::CULL_MODE::FRUSTUM_HIZ);
-	submission.keepMatGeomBindings();
 	submission.Render();
 }
 
@@ -4301,9 +4300,9 @@ void HIGHOMEGA::RENDER::PASSES::PathTraceClass::Create(TriClass & PostProcessTri
 
 	if (RTInstance::Enabled())
 	{
-		rtShaderResourceSet.CreateRT("shaders/rtdiffusetrace.rgen.spv", "main", "shaders/rtdiffusetrace.rchit.spv", "main", "shaders/rtdiffusetrace.rmiss.spv", "main", "shaders/rtalphakey.rahit.spv", "main");
+		rtShaderResourceSet.CreateRT("shaders/rtdiffusetrace.rgen.spv", "main", "shaders/rtchit.rchit.spv", "main", "shaders/rtmiss.rmiss.spv", "main", "shaders/rtalphakey.rahit.spv", "main");
 		tracelet.Make(Instance);
-		rtShaderResourceSetGloss.CreateRT("shaders/rtglosstrace.rgen.spv", "main", "shaders/rtglosstrace.rchit.spv", "main", "shaders/rtglosstrace.rmiss.spv", "main", "shaders/rtalphakey.rahit.spv", "main");
+		rtShaderResourceSetGloss.CreateRT("shaders/rtglosstrace.rgen.spv", "main", "shaders/rtchit.rchit.spv", "main", "shaders/rtmiss.rmiss.spv", "main", "shaders/rtalphakey.rahit.spv", "main");
 		traceletGloss.Make(Instance);
 	}
 	else
@@ -4540,14 +4539,10 @@ void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::SetPlayer(unsigned int playerI
 	playerFrusta[playerId].eye2Whr[1] = eye2.y;
 	playerFrusta[playerId].eye2Whr[2] = eye2.z;
 	playerFrusta[playerId].eye2Whr[3] = inWhr;
-	vec2 lookSph = toSpherical(look);
-	vec2 upSph = toSpherical(up);
-	vec2 look2Sph = toSpherical(look2);
-	vec2 up2Sph = toSpherical(up2);
-	playerFrusta[playerId].lookUpLook2Up2[0] = packSpherical(lookSph);
-	playerFrusta[playerId].lookUpLook2Up2[1] = packSpherical(upSph);
-	playerFrusta[playerId].lookUpLook2Up2[2] = packSpherical(look2Sph);
-	playerFrusta[playerId].lookUpLook2Up2[3] = packSpherical(up2Sph);
+	playerFrusta[playerId].lookUpLook2Up2[0] = toZSignXY(look);
+	playerFrusta[playerId].lookUpLook2Up2[1] = toZSignXY(up);
+	playerFrusta[playerId].lookUpLook2Up2[2] = toZSignXY(look2);
+	playerFrusta[playerId].lookUpLook2Up2[3] = toZSignXY(up2);
 	playerFrusta[playerId].geomCentYScale[0] = geomCent.x;
 	playerFrusta[playerId].geomCentYScale[1] = geomCent.y;
 	playerFrusta[playerId].geomCentYScale[2] = geomCent.z;
@@ -4806,12 +4801,18 @@ void HIGHOMEGA::RENDER::PASSES::SpatialDenoiseClass::Create(TriClass & PostProce
 	shaderH.Create("shaders/postprocess.vert.spv", "main", "shaders/glossBilateral.frag.spv", "main");
 	shaderV.Create("shaders/postprocess.vert.spv", "main", "shaders/glossBilateral.frag.spv", "main");
 
+	float invSizeX = 1.0f / ((float)TemporalAccumulate.glossTemporalAccumulateResultAttach.getWidth());
+	float invSizeY = 1.0f / ((float)TemporalAccumulate.glossTemporalAccumulateResultAttach.getHeight());
+	unsigned int invSizeXUint = *((unsigned int*)(&invSizeX));
+	unsigned int invSizeYUint = *((unsigned int*)(&invSizeY));
+
 	shaderH.AddResource(RESOURCE_UBO, VERTEX | FRAGMENT, 0, 0, PostProcessTri.triFrustum.Buffer);
 	shaderH.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 1, TemporalAccumulate.glossTemporalAccumulateResultAttach);
 	shaderH.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 2, GatherResolve.materialAttach);
 	shaderH.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 3, GatherResolve.worldPosAttach);
 	shaderH.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, GatherResolve.normalAttach);
 	shaderH.AddResource(RESOURCE_UBO, FRAGMENT, 0, 5, pathTraceRef->PathTraceParamsBuf);
+	shaderH.SetStageSpecializationData(FRAGMENT, { "HorizPass", {{0u, invSizeXUint}, {1u, 0u}} });
 
 	shaderV.AddResource(RESOURCE_UBO, VERTEX | FRAGMENT, 0, 0, PostProcessTri.triFrustum.Buffer);
 	shaderV.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 1, blurHAttach);
@@ -4819,6 +4820,7 @@ void HIGHOMEGA::RENDER::PASSES::SpatialDenoiseClass::Create(TriClass & PostProce
 	shaderV.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 3, GatherResolve.worldPosAttach);
 	shaderV.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 4, GatherResolve.normalAttach);
 	shaderV.AddResource(RESOURCE_UBO, FRAGMENT, 0, 5, pathTraceRef->PathTraceParamsBuf);
+	shaderV.SetStageSpecializationData(FRAGMENT, { "VertiPass", {{0u, 0u}, {1u, invSizeYUint}} });
 
 	submissionH.SetShader("default", shaderH);
 	submissionV.SetShader("default", shaderV);
@@ -4834,21 +4836,11 @@ void HIGHOMEGA::RENDER::PASSES::SpatialDenoiseClass::Render()
 	pathTraceRef->PathTraceParamsBuf.UploadSubData(0, &pathTraceRef->PathTraceParams, sizeof(pathTraceRef->PathTraceParams));
 
 	submissionH.Render();
-
-	pathTraceRef->PathTraceParams.timeTurnBlurDirectionRawLight[2] = 1.0f;
-	pathTraceRef->PathTraceParamsBuf.UploadSubData(0, &pathTraceRef->PathTraceParams, sizeof(pathTraceRef->PathTraceParams));
-
 	submissionV.Render();
 }
 
 void HIGHOMEGA::RENDER::PASSES::SimpleGaussian::Create(TriClass & PostProcessTri, BlurInputHolder & inputHolder, unsigned int outputWidth, unsigned int outputHeight, unsigned int blurSize, bool displayVOnScreen)
 {
-	blurParams.invDims[0] = 1.0f / (float)(outputWidth);
-	blurParams.invDims[1] = 1.0f / (float)(outputHeight);
-	blurParams.blurDirection = 0.0f;
-	blurParams.size = (float)blurSize;
-	blurParamsBuf.Buffer(MEMORY_HOST_VISIBLE, SHARING_DEFAULT, MODE_CREATE, USAGE_UBO, Instance, &blurParams, (unsigned int)sizeof(blurParams));
-
 	blurHAttach.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, outputWidth, outputHeight, true, true);
 	blurVAttach.CreateOffScreenColorAttachment(Instance, R16G16B16A16F, outputWidth, outputHeight, true, true);
 
@@ -4880,31 +4872,27 @@ void HIGHOMEGA::RENDER::PASSES::SimpleGaussian::Create(TriClass & PostProcessTri
 	blurHSubmission.SetDefaultPipelineFlags(defPipelineFlags);
 	blurVSubmission.SetDefaultPipelineFlags(defPipelineFlags);
 
+	float invSizeX = 1.0f / (float)(outputWidth);
+	float invSizeY = 1.0f / (float)(outputHeight);
+	unsigned int invSizeXUint = *((unsigned int*)(&invSizeX));
+	unsigned int invSizeYUint = *((unsigned int*)(&invSizeY));
+
 	blurHShader.Create("shaders/postprocess.vert.spv", "main", "shaders/gaussianSepSimple.frag.spv", "main");
 	blurHShader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
-	blurHShader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 1, blurParamsBuf);
-	blurHShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 2, inputHolder.blurInput);
+	blurHShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 1, inputHolder.blurInput);
+	blurHShader.SetStageSpecializationData(FRAGMENT, { "HorizFogPass", {{0u, invSizeXUint}, {1u, 0u}, {2u, 4u}} });
 	blurHSubmission.SetShader("default", blurHShader);
 
 	blurVShader.Create("shaders/postprocess.vert.spv", "main", "shaders/gaussianSepSimple.frag.spv", "main");
 	blurVShader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
-	blurVShader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 1, blurParamsBuf);
-	blurVShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 2, blurHAttach);
+	blurVShader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 1, blurHAttach);
+	blurVShader.SetStageSpecializationData(FRAGMENT, { "VertiFogPass", {{0u, 0u}, {1u, invSizeYUint}, {2u, 4u}} });
 	blurVSubmission.SetShader("default", blurVShader);
 }
 
-void HIGHOMEGA::RENDER::PASSES::SimpleGaussian::Render(unsigned int blurSize)
+void HIGHOMEGA::RENDER::PASSES::SimpleGaussian::Render()
 {
-	blurParams.blurDirection = 0.0f;
-	blurParams.size = (float)blurSize;
-	blurParamsBuf.UploadSubData(0, &blurParams, sizeof(blurParams));
-
 	blurHSubmission.Render();
-
-	blurParams.blurDirection = 1.0f;
-	blurParams.size = (float)blurSize;
-	blurParamsBuf.UploadSubData(0, &blurParams, sizeof(blurParams));
-
 	blurVSubmission.Render();
 }
 
@@ -5039,7 +5027,7 @@ void HIGHOMEGA::RENDER::PASSES::NearScatteringClass::Render()
 	if (nearScatteringParams.amount > 0.0f)
 	{
 		submission.Render();
-		blurPass.Render(4);
+		blurPass.Render();
 	}
 }
 

@@ -207,7 +207,7 @@ namespace HIGHOMEGA
 			friend class GraphicsModel;
 		protected:
 			std::unordered_map<unsigned long long, SubmittedRenderItem> allSubmittedItems;
-			static void CompileInstanceProperties(InstanceProperties & outProp, const MeshMaterial & inpMaterial);
+			static void CompileInstanceProperties(InstanceProperties & outProp, const MeshMaterial & inpMaterial, HIGHOMEGA_TEXTURE_OFFSET textureOffsets[6]);
 		public:
 			GroupedRenderSubmission();
 			virtual SubmittedRenderItem Add(GraphicsModel & inpModel, std::function<bool(MeshMaterial & curMat)> inpFilterFunction = [](MeshMaterial & curMat) -> bool {
@@ -517,7 +517,6 @@ namespace HIGHOMEGA
 			} mipParams_HiZ;
 			BufferClass mipParamsBuffer_HiZ;
 
-			bool recordMatGeomBindings;
 			GroupedRasterSubmission *takenMatGeomBindings = nullptr;
 			unsigned long long matGeomSourceRecordID;
 			unsigned long long cmdRecordId;
@@ -538,8 +537,7 @@ namespace HIGHOMEGA
 			std::vector <InstanceProperties> SSBOdata;
 
 			std::unordered_map <MeshMaterial, std::vector<GeometryClass *>, MeshMaterialHash> entireMatGeomMap;
-			static std::unordered_map <GroupedRasterSubmission *, std::unordered_map <std::string, std::unordered_map <std::string, DescriptorSets *>>> globalDSCache;
-			static std::mutex globalDSCache_mutex;
+			std::unordered_map <std::string, DescriptorSets *> DSCache;
 			std::vector <MaterialGeomPairing> MaterialGeomPairings;
 			std::vector <PSO_DSL_DS_GeomPairing> PSO_DSL_DS_GeomPairings;
 			std::vector <ShaderResource> MaterialBindings;
@@ -571,7 +569,6 @@ namespace HIGHOMEGA
 			void requestBVH(GroupedBVHSubmission & bvhHolder);
 			void requestSDFBVH(GroupedSDFBVHSubmission & sdfBvhSubmission);
 			void doCulling(FrustumClass &inpFrustum, CULL_MODE inCullMode);
-			void keepMatGeomBindings();
 			void consumeMatGeomBindings(GroupedRasterSubmission *inpConsumeMatGeomBindingsFrom);
 			unsigned int instanceCount();
 			unsigned int WorkGroupFrustumCullX();
@@ -988,7 +985,7 @@ namespace HIGHOMEGA
 				{
 					float eyeGeomRad[4];
 					float eye2Whr[4];
-					float lookUpLook2Up2[4];
+					unsigned int lookUpLook2Up2[4];
 					float geomCentYScale[4];
 					unsigned int maskEnabledReserved;
 				};
@@ -1049,13 +1046,6 @@ namespace HIGHOMEGA
 			class SimpleGaussian
 			{
 			private:
-				struct
-				{
-					float invDims[2];
-					float blurDirection;
-					float size;
-				} blurParams;
-				BufferClass blurParamsBuf;
 				FramebufferClass frameBufferH, frameBufferV;
 
 			public:
@@ -1064,7 +1054,7 @@ namespace HIGHOMEGA
 				ShaderResourceSet blurHShader, blurVShader;
 
 				void Create(TriClass & PostProcessTri, BlurInputHolder & inputHolder, unsigned int outputWidth, unsigned int outputHeight, unsigned int blurSize, bool displayVOnScreen = false);
-				void Render(unsigned int blurSize);
+				void Render();
 			};
 			class ModulateClass : public OffScreenPassClass
 			{
