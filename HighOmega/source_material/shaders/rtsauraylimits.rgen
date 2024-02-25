@@ -27,16 +27,13 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : require
 
-#define M_PI 3.1415926535
-#define M_INV_PI 0.31830988618
-
 layout (binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
 
 struct PlayerFrustum
 {
 	vec4 eyeGeomRad;
 	vec4 eye2Whr;
-	vec4 lookUpLook2Up2;
+	uvec4 lookUpLook2Up2;
 	vec4 geomCentYScale;
 	uint maskEnabledReserved;
 };

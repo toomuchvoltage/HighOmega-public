@@ -26,6 +26,8 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_scalar_block_layout : require
 
 layout(location = 0) rayPayloadInEXT struct {
 	/*
@@ -40,11 +42,17 @@ hitAttributeEXT vec3 hitBaryCoord;
 
 struct InstanceProps
 {
-	vec4 attribs;
-	vec4 attribs2;
+    vec3 attribs1;
+    vec4 attribs2;
+    uint16_t splatOffset;
+    uint16_t diffOffset;
+    uint16_t nrmOffset;
+    uint16_t rghOffset;
+    uint16_t hgtOffset;
+    uint16_t spcOffset;
 };
 
-layout (binding = 3) buffer InstanceInfoSSBO
+layout (scalar, binding = 3) buffer InstanceInfoSSBO
 {
 	InstanceProps props[];
 } instanceInfo;
@@ -79,7 +87,7 @@ void registerPlayerHit(uint viewerPlayer, uint subjectPlayer)
 void main()
 {
 	uint originatingPlayerId = bitfieldExtract(rayLoad.isectPlayerOrigPlayerId, 0, 31);
-	uint hitPlayerId = floatBitsToUint (curInstInfo.attribs.y);
+	uint hitPlayerId = floatBitsToUint (curInstInfo.attribs2.w);
 
 	if ( hitPlayerId != originatingPlayerId && hitPlayerId != 0xFFFFFFFF )
 	{
