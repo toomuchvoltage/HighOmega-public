@@ -214,7 +214,7 @@ unsigned int HIGHOMEGA::MATH::ACCEL_STRUCT::BVHGenCPUClass::genHierarchyCompress
 		triangleArrComp[lo].e1InstComp1e2InstComp2e3InstComp3OpaqueFlagPrimID[1] = e2Comp;
 		triangleArrComp[lo].e1InstComp1e2InstComp2e3InstComp3OpaqueFlagPrimID[2] = e3Comp;
 		triangleArrComp[lo].e1InstComp1e2InstComp2e3InstComp3OpaqueFlagPrimID[3] = (*((unsigned int *)(&leafTri.e2Primitive[3])) & 0x7FFFFFFFu);
-		unsigned int attribs0 = *((unsigned int *)(&((*instPropsRef)[instanceId].attribs[0])));
+		unsigned int attribs0 = *((unsigned int *)(&((*instPropsRef)[instanceId].attribs1[0])));
 		if ((attribs0 & 0x00000080u) != 0u)
 			triangleArrComp[lo].e1InstComp1e2InstComp2e3InstComp3OpaqueFlagPrimID[3] |= 0x80000000;
 

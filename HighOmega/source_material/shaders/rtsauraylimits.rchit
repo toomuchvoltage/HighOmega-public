@@ -27,9 +27,6 @@
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_nonuniform_qualifier : require
 
-#define M_PI 3.1415926535
-#define M_INV_PI 0.31830988618
-
 layout(location = 0) rayPayloadInEXT struct {
 	float hitT;
 } rayLoad;

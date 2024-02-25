@@ -934,7 +934,6 @@ namespace HIGHOMEGA
 			ThreadLocalCache <std::vector<VkDescriptorPool>>::value *descriptorPoolPtr = nullptr;
 			VkDescriptorPool poolObject;
 			bool writtenOnce = false;
-			bool isDirty = false;
 
 		public:
 
@@ -944,16 +943,18 @@ namespace HIGHOMEGA
 			{
 				Make(std::forward<Args>(args)...);
 			}
-			void SetDirty(bool isDirty);
 			bool GetDirty();
 			void WriteDescriptorSets(std::vector<ShaderResource>& allResources);
 			void RewriteDescriptorSets(std::vector<ShaderResource>& allResources);
 			void UpdateDescriptorSets(std::vector<ShaderResource>& allResources);
 			~DescriptorSets();
 		};
+		typedef short unsigned int HIGHOMEGA_TEXTURE_OFFSET;
 		struct InstanceProperties
 		{
-			float attribs[8];
+			float attribs1[3];
+			float attribs2[4];
+			HIGHOMEGA_TEXTURE_OFFSET textureOffsets[6];
 		};
 		enum BlendFactors
 		{
@@ -1070,7 +1071,7 @@ namespace HIGHOMEGA
 			struct TraceItem
 			{
 				RTGeometry *geomRef;
-				std::vector <ImageClass *> material;
+				std::function<void(InstanceProperties&, std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>&)> compileInstancePropertiesCallback;
 				InstanceProperties instanceData;
 				VkAccelerationStructureInstanceKHR rtInstanceData;
 			};
@@ -1098,7 +1099,7 @@ namespace HIGHOMEGA
 
 				RTScene();
 				~RTScene();
-				void Add(unsigned long long inpId, std::vector <ImageClass *> & inpMaterials, RTGeometry & inpGeom, InstanceProperties & inpInstanceData, InstanceClass & inpInstance);
+				void Add(unsigned long long inpId, std::function<void(InstanceProperties&, std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>&)>& compInstPropsCallback, RTGeometry & inpGeom, InstanceClass & inpInstance);
 				void RemoveAll(unsigned long long inpId);
 				unsigned long long rtSceneID();
 				std::vector <ShaderResource> & getMaterialResources();

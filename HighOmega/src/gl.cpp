@@ -5035,11 +5035,6 @@ void HIGHOMEGA::GL::DescriptorSets::RewriteDescriptorSets(std::vector<ShaderReso
 	WriteDescriptorSets(allResources);
 }
 
-void HIGHOMEGA::GL::DescriptorSets::SetDirty(bool isDirty)
-{
-	this->isDirty = isDirty;
-}
-
 void HIGHOMEGA::GL::DescriptorSets::UpdateDescriptorSets(std::vector<ShaderResource>& allResources)
 {
 	for (unsigned int curSet : ptrToDescSetLayout->allSets)
@@ -5173,11 +5168,6 @@ void HIGHOMEGA::GL::DescriptorSets::UpdateDescriptorSets(std::vector<ShaderResou
 		ptrToInstance->fpUpdateDescriptorSetWithTemplateKHR(ptrToInstance->device, descriptorSets[curSet], myDescriptorUpdateTemplate, descriptorUpdateTemplateData[curSet].data());
 		ptrToInstance->fpDestroyDescriptorUpdateTemplateKHR(ptrToInstance->device, myDescriptorUpdateTemplate, nullptr);
 	}
-}
-
-bool HIGHOMEGA::GL::DescriptorSets::GetDirty()
-{
-	return isDirty;
 }
 
 HIGHOMEGA::GL::DescriptorSets::~DescriptorSets()
@@ -5404,14 +5394,13 @@ HIGHOMEGA::GL::KHR_RT::RTScene::~RTScene()
 	RemovePast();
 }
 
-void HIGHOMEGA::GL::KHR_RT::RTScene::Add(unsigned long long inpId, std::vector <ImageClass *> & inpMaterials, RTGeometry & inpGeom, InstanceProperties & inpInstanceData, InstanceClass & inpInstance)
+void HIGHOMEGA::GL::KHR_RT::RTScene::Add(unsigned long long inpId, std::function<void(InstanceProperties&, std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>&)>& compInstPropsCallback, RTGeometry & inpGeom, InstanceClass & inpInstance)
 {
 	if (!ptrToInstance) ptrToInstance = &inpInstance;
 
 	TraceItem trItem;
 	trItem.geomRef = &inpGeom;
-	trItem.material = inpMaterials;
-	trItem.instanceData = inpInstanceData;
+	trItem.compileInstancePropertiesCallback = compInstPropsCallback;
 
 	VkAccelerationStructureInstanceKHR curInst;
 	for (int i = 0; i != 3; i++)
@@ -5445,7 +5434,6 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateInstanceData(std::vector <VkAccelerat
 	allMat.clear();
 	allGeom.clear();
 	instances.reserve(instCount);
-	allMat.reserve(instCount * 5);
 	allGeom.reserve(instCount);
 
 	unsigned int bufferInstanceCount = (((unsigned int)instCount / 1000) + 1) * 1000;
@@ -5458,6 +5446,26 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateInstanceData(std::vector <VkAccelerat
 		instancePropertiesBuffer.Buffer(MEMORY_HOST_VISIBLE, SHARING_EXCLUSIVE, MODE_CREATE, USAGE_SSBO, *ptrToInstance, nullptr, instanceBufferSize);
 	}
 
+	std::unordered_map <ImageClass*, HIGHOMEGA_TEXTURE_OFFSET> uniqueSamplers;
+	for (std::pair<const unsigned long long, std::vector<TraceItem>>& traceItemKV : allTraceItems)
+		for (TraceItem& curTraceItem : traceItemKV.second)
+			curTraceItem.compileInstancePropertiesCallback(curTraceItem.instanceData, uniqueSamplers);
+
+	struct ImgRefOrder
+	{
+		ImageClass* img;
+		unsigned int order;
+	};
+	std::vector<ImgRefOrder> ImgRefOrderVector;
+	for (const std::pair<ImageClass*, HIGHOMEGA_TEXTURE_OFFSET>& curSampler : uniqueSamplers)
+		ImgRefOrderVector.push_back(ImgRefOrder{ curSampler.first, curSampler.second });
+	std::sort(ImgRefOrderVector.begin(), ImgRefOrderVector.end(), [](const ImgRefOrder& lhs, const ImgRefOrder& rhs) {
+		return lhs.order <= rhs.order;
+	});
+	allMat.reserve(ImgRefOrderVector.size());
+	for (ImgRefOrder& curImgRefOrder : ImgRefOrderVector)
+		allMat.emplace_back(RESOURCE_SAMPLER, RT_RAYGEN, 2, 0, *curImgRefOrder.img);
+
 	unsigned int instanceIdCount = 0;
 	for (std::pair<const unsigned long long, std::vector<TraceItem>> & traceItemKV : allTraceItems)
 		for (TraceItem & curTraceItem : traceItemKV.second)
@@ -5467,8 +5475,6 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateInstanceData(std::vector <VkAccelerat
 			instances.push_back(curTraceItem.rtInstanceData);
 			allInstanceData.push_back(curTraceItem.instanceData);
 			allGeom.push_back(ShaderResource(RESOURCE_SSBO, RT_RAYGEN, 1, 0, *curTraceItem.geomRef->completeVertexBufferRef));
-			for (ImageClass *curSam : curTraceItem.material)
-				allMat.push_back(ShaderResource(RESOURCE_SAMPLER, RT_RAYGEN, 2, 0, *curSam));
 			instanceIdCount++;
 		}
 

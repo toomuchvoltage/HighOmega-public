@@ -39,19 +39,9 @@ layout (scalar, binding = 0) uniform FrameMVPUBO
 	vec2 whrTanHalfFovY;
 } frameMVP;
 
-struct InstanceProps
-{
-	vec4 attribs;
-	vec4 attribs2;
-};
-
-layout (set = 1, binding = 5) buffer InstanceInfoSSBO
-{
-	InstanceProps props[];
-} instanceInfo;
-
 layout (location = 0) out vec2 outUV;
 layout (location = 1) out vec3 outPos;
+layout (location = 2) flat out uint outInstanceIndex;
 
 out gl_PerVertex 
 {
@@ -83,4 +73,5 @@ void main()
 	vec3 vColor, vNorm;
 	unpackRasterVertex (outPos, vColor, outUV, vNorm, inPosCol, inUV, inNorm);
 	gl_Position = frameMVP.projectionViewMatrix * vec4(outPos, 1.0);
+	outInstanceIndex = gl_InstanceIndex;
 }
