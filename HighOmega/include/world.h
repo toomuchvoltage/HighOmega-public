@@ -727,7 +727,6 @@ namespace HIGHOMEGA
 			PipelineSetupReturn Run();
 			bool IsApplicationQuitting();
 		};
-
 		void CreateWorld(WorldParamsClass & WorldParams);
 		void DestroyWorld();
 	}

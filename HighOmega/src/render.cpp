@@ -372,6 +372,9 @@ bool HIGHOMEGA::RENDER::MeshMaterial::operator==(const MeshMaterial & other) con
 		(holographicInParticleScene == other.holographicInParticleScene) &&
 		(perVertexVelocity == other.perVertexVelocity) &&
 		(parallaxOcclusionMapping == other.parallaxOcclusionMapping) &&
+		(scattering == other.scattering) &&
+		(playerId == other.playerId) &&
+		(rayMask == other.rayMask) &&
 		(renderOrder == other.renderOrder);
 }
 
@@ -601,7 +604,9 @@ HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(HIGHOMEGA::MESH::DataBlock & propB
 
 	parallaxOcclusionMapping = false;
 	if (Mesh::getDataRowFloat(propBlock, "parallaxOcclusionMapping", tmpFloat))
-		parallaxOcclusionMapping = (tmpFloat == 1.0f);
+	parallaxOcclusionMapping = (tmpFloat == 1.0f);
+
+	holographicInParticleScene = Mesh::getDataRowFloat(propBlock, "isHolographicInParticleScene", tmpFloat);
 }
 
 HIGHOMEGA::RENDER::MeshMaterial::MeshMaterial(const std::string& inDiffName, const std::string& belong, InstanceClass& ptrToInstance, bool noBumpClaims)
@@ -690,8 +695,11 @@ std::size_t HIGHOMEGA::RENDER::MeshMaterialHash::operator()(const MeshMaterial &
 		^ hash<bool>()(k.isDecal)
 		^ hash<bool>()(k.postProcess)
 		^ hash<bool>()(k.backDropGlass)
-		^ hash<bool>()(k.holographicInParticleScene)
 		^ hash<bool>()(k.parallaxOcclusionMapping)
+		^ hash<bool>()(k.holographicInParticleScene)
+		^ hash<bool>()(k.scattering)
+		^ hash<unsigned int>()(k.playerId)
+		^ hash<unsigned char>()(k.rayMask)
 		^ hash<bool>()(k.perVertexVelocity)
 		^ hash<int>()(k.renderOrder);
 }
@@ -1071,6 +1079,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(std::string& newGroupId, MeshMateri
 	inMaterial.BumpClaims();
 
 	curGeom->Geometry(Instance, idxVertData, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), inMaterial.isAlphaKeyed, newGroupId, inpImmutable, nullptr, nullptr, breakable);
+	curGeom->getRTGeom().SetMask(inMaterial.rayMask);
 
 	isInit = true;
 }
@@ -1083,6 +1092,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(std::string& newGroupId, MeshMateri
 	inMaterial.BumpClaims();
 
 	curGeom->Geometry(Instance, idxVertData, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), inMaterial.isAlphaKeyed, newGroupId, inpImmutable, nullptr, nullptr, breakable);
+	curGeom->getRTGeom().SetMask(inMaterial.rayMask);
 
 	isInit = true;
 }
@@ -1270,6 +1280,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, st
 		{
 			curGeom->Geometry(ptrToInstance, indexVertData, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), mat.isAlphaKeyed, curPolyGroup.name, inpImmutable, nullptr, nullptr, destructible);
 		}
+		curGeom->getRTGeom().SetMask(mat.rayMask);
 
 		indexVertData.clear();
 		vertAnimData.clear();
@@ -1492,6 +1503,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::addGeomWithGroupId(const std::string& new
 	inMaterial.BumpClaims();
 
 	curGeom->Geometry(Instance, idxVertData, GeometryClass::DataLayout(0, FORMAT::R32G32B32A32F, FORMAT::R16G16F, FORMAT::R32UI), inMaterial.isAlphaKeyed, newGroupId, inpImmutable);
+	curGeom->getRTGeom().SetMask(inMaterial.rayMask);
 	std::unordered_map <MeshMaterial, std::list<GeometryClass>, MeshMaterialHash>::iterator it = MaterialGeomMap.find(inMaterial);
 
 	for (GraphicsModelInstance* curInst : instances)
@@ -2109,8 +2121,8 @@ void HIGHOMEGA::RENDER::GroupedRenderSubmission::CompileInstanceProperties(Insta
 	if (inpMaterial.isAlphaKeyed)
 		attribs0 |= 0x00000080;
 
-	// Is parallax occlusion mapping?
-	if (inpMaterial.parallaxOcclusionMapping)
+	// Scattering (i.e. smoke)
+	if (inpMaterial.scattering)
 		attribs0 |= 0x00000100;
 
 	// Is decal?
@@ -2159,8 +2171,8 @@ void HIGHOMEGA::RENDER::GroupedRenderSubmission::CompileInstanceProperties(Insta
 	// Vertex displacement height factor
 	outProp.attribs2[2] = inpMaterial.heightMapDisplaceFactor;
 
-	// Subdivision amount for tessellation
-	outProp.attribs2[3] = inpMaterial.subDivAmount;
+	// Player ID (we're not going to factor in most tessellation work into vis determination)
+	outProp.attribs2[3] = *((float*)&inpMaterial.playerId);
 
 	memcpy(outProp.textureOffsets, textureOffsets, sizeof(outProp.textureOffsets));
 
@@ -5374,6 +5386,221 @@ HIGHOMEGA::RENDER::PASSES::BlueNoiseHolderClass::~BlueNoiseHolderClass()
 	}
 }
 
+/*
+	******************************************************
+	*************Beginning of SauRay(TM) code*************
+	******************************************************
+
+	Copyright © 2026 TooMuchVoltage Software Inc. This notice shall always be coupled with any SauRay(TM) implementation and must be redistributed alongside it.
+
+	This implementation of US20220219086A1 is provided royalty free for either of the following:
+
+	* Games with gross revenues of under one(1) million dollars CAD.
+	* Games with at least a publically distributed moddable server binary with which SauRay(TM) is successfully integrable.
+
+	Public distribution requires either a public download link or a relatively simple registration and download process. If you are unsure of your registration process's straightforwardness, reach out directly.
+
+	Free open-source games (i.e. Cube/Sauerbraten or Xonotic) automatically qualify since successful SauRay(TM) integration is ultimately feasible with sufficient effort.
+
+	Open source games with non-Libre licenses (i.e. non-GPL, non-MIT) also qualify as long as the license is no further restrictive than that of Quake(idTech) II's. If unsure of whether your source code redistribution license is permissive enough, please reach out directly.
+
+	For games where at least the distributed server component is either open-source or moddable (in a manner permissible by the IP owner) the game must be sufficiently thin-client so that a SauRay(TM) integration does not result in crashes or defects that largely break the game in most multiplayer game modes. If you are unsure of whether your distributed binaries qualify for this category, please get in touch directly.
+
+	We can be reached at the email address: sauray@toomuchvoltage.com or using the contact information found on the website http://sauray.tech .
+
+	If your game does not qualify under either of the above categories, contact us for a commercial license. The covered source files are protected by copyright and the aforementioned terms will apply beyond the life of US20220219086A1.
+
+	All games using US20220219086A1 or this implementation of it must clearly declare that they're using it in a way noticeable and comprehensible by an average player of the game in the English language.
+
+	Beyond what is stated in http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf this source code does not provide any warranties of merchantability or fitness for any particular purpose.
+*/
+
+void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::SetPlayer(unsigned int playerId, unsigned char otherTeamId, const vec3 & eye, const vec3 & look, const vec3 & up, const vec3 & eye2, const vec3 & look2, const vec3 & up2, float inYFov, float inWhr, vec3 & geomCent, float geomRad)
+{
+	if (playerId >= maxPlayers)
+	{
+		LOG() << "SetPlayer ignored. PlayerID (" << playerId << ") is higher than maxPlayers (" << maxPlayers << ")";
+		return;
+	}
+	playerFrusta[playerId].eyeGeomRad[0] = eye.x;
+	playerFrusta[playerId].eyeGeomRad[1] = eye.y;
+	playerFrusta[playerId].eyeGeomRad[2] = eye.z;
+	playerFrusta[playerId].eyeGeomRad[3] = geomRad;
+	playerFrusta[playerId].eye2Whr[0] = eye2.x;
+	playerFrusta[playerId].eye2Whr[1] = eye2.y;
+	playerFrusta[playerId].eye2Whr[2] = eye2.z;
+	playerFrusta[playerId].eye2Whr[3] = inWhr;
+	playerFrusta[playerId].lookUpLook2Up2[0] = toZSignXY(look);
+	playerFrusta[playerId].lookUpLook2Up2[1] = toZSignXY(up);
+	playerFrusta[playerId].lookUpLook2Up2[2] = toZSignXY(look2);
+	playerFrusta[playerId].lookUpLook2Up2[3] = toZSignXY(up2);
+	playerFrusta[playerId].geomCentYScale[0] = geomCent.x;
+	playerFrusta[playerId].geomCentYScale[1] = geomCent.y;
+	playerFrusta[playerId].geomCentYScale[2] = geomCent.z;
+	playerFrusta[playerId].geomCentYScale[3] = tanf(((inYFov * HIGHOMEGA_PI) / 180.0f) * 0.5f);
+	playerFrusta[playerId].maskEnabledReserved = (otherTeamId << 24);
+	playerFrusta[playerId].maskEnabledReserved |= (1 << 16);
+	newPlayerInfo = true;
+}
+
+void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::RemovePlayer(unsigned int playerId)
+{
+	if (playerId >= maxPlayers)
+	{
+		LOG() << "RemovePlayer ignored. PlayerID (" << playerId << ") is higher than maxPlayers (" << maxPlayers << ")";
+		return;
+	}
+	playerFrusta[playerId].maskEnabledReserved &= 0xFF00FFFF;
+	newPlayerInfo = true;
+}
+
+void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::Create(GroupedTraceSubmission & mainSubmission, unsigned int inpMaxPlayers, unsigned int inpResSide, unsigned int inpHistoryAmount, bool debugMode)
+{
+	if (blueNoise->getWidth() == 0) blueNoise->CreateTexture(Instance, "assets/common/", "bluenoise.tga", 1, false, false, false, false);
+
+	mainSubmissionRef = &mainSubmission;
+	playerResSide = inpResSide;
+	maxPlayers = inpMaxPlayers;
+	maxPlayerSqrt = (unsigned int)sqrt(maxPlayers);
+	resSide = playerResSide * maxPlayerSqrt;
+	temporalAmount = inpHistoryAmount;
+
+	playerFrusta.resize(maxPlayers);
+	playerLimits.resize(maxPlayers);
+	playerVisMatrix.resize(maxPlayers * maxPlayers);
+	for (int i = 0; i != playerLimits.size(); i++)
+	{
+		for (int j = 0; j != 20; j++)
+			playerLimits[i].aabbLim[j] = 0.0f;
+		for (int j = 0; j != 24; j++)
+			playerLimits[i].corners[j] = 0.0f;
+	}
+
+	for (int i = 0; i != maxPlayers; i++)
+		playerFrusta[i].maskEnabledReserved &= 0xFF00FFFF;
+	memset((void *)playerVisMatrix.data(), 0, (unsigned int)playerVisMatrix.size() * sizeof(playerVisData));
+	timeInfo.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[0] = 0;
+	timeInfo.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[1] = maxPlayerSqrt;
+	timeInfo.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[2] = playerResSide;
+	timeInfo.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[3] = temporalAmount;
+
+	frustaBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SSBO, Instance, (void *)playerFrusta.data(), (unsigned int)(playerFrusta.size() * sizeof(playerFrustum)));
+	limitsBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SSBO, Instance, (void *)playerLimits.data(), (unsigned int)(playerLimits.size() * sizeof(playerLimit)));
+	visibilityMatrixBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SSBO, Instance, (void *)playerVisMatrix.data(), (unsigned int)(playerVisMatrix.size() * sizeof(playerVisData)));
+	timeBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_UBO, Instance, &timeInfo, (unsigned int)sizeof(timeInfo));
+
+	testOutput.CreateImageStore(Instance, R8G8B8A8UN, resSide, resSide, 1, _2D, false);
+
+	if (RTInstance::Enabled())
+	{
+		if (debugMode)
+			rtShaderResourceSet.CreateRT("shaders/rtsauraytrace.rgen.spv", "main", "shaders/rtsauraytrace.rchit.spv", "main", "shaders/rtsauraytrace.rmiss.spv", "main", "shaders/rtsauraytrace.rahit.spv", "main");
+		else
+			rtShaderResourceSet.CreateRT("shaders/rtsauraytrace_release.rgen.spv", "main", "shaders/rtsauraytrace_release.rchit.spv", "main", "shaders/rtsauraytrace_release.rmiss.spv", "main", "shaders/rtsauraytrace_release.rahit.spv", "main");
+		rtShaderResourceSet2.CreateRT("shaders/rtsauraylimits.rgen.spv", "main", "shaders/rtsauraylimits.rchit.spv", "main", "shaders/rtsauraylimits.rmiss.spv", "main", "shaders/rtsauraylimits.rahit.spv", "main");
+		tracelet.Make(Instance);
+		tracelet2.Make(Instance);
+	}
+}
+
+void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::PrePass()
+{
+	if (RTInstance::Enabled())
+	{
+		if (newPlayerInfo)
+		{
+			frustaBuf.UploadSubData(0, (void *)playerFrusta.data(), (unsigned int)playerFrusta.size() * sizeof(playerFrustum));
+			newPlayerInfo = false;
+		}
+		RTScene & rtSceneRef = mainSubmissionRef->rtScene;
+		bool rewriteDescriptoSets = false;
+		unsigned long long curSceneId = mainSubmissionRef->SceneID();
+		if (curSceneId != lastSceneId2)
+		{
+			lastSceneId2 = curSceneId;
+			rewriteDescriptoSets = true;
+			tracingResources2.clear();
+			tracingResources2.emplace_back(RESOURCE_RT_ACCEL_STRUCT, RT_RAYGEN, 0, 0, rtSceneRef);
+			tracingResources2.emplace_back(RESOURCE_SSBO, RT_RAYGEN, 0, 1, frustaBuf);
+			tracingResources2.emplace_back(RESOURCE_SSBO, RT_RAYGEN, 0, 2, limitsBuf);
+		}
+		tracelet2.Submit((unsigned int)playerLimits.size() * 26, 1, 1, tracingResources2, rewriteDescriptoSets, rtShaderResourceSet2);
+		limitsBuf.DownloadSubData(0, playerLimits.data(), (unsigned int)playerLimits.size() * sizeof(playerLimit));
+	}
+}
+
+void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::Render()
+{
+	if (RTInstance::Enabled())
+	{
+		if (newPlayerInfo)
+		{
+			frustaBuf.UploadSubData(0, (void *)playerFrusta.data(), (unsigned int)playerFrusta.size() * sizeof(playerFrustum));
+			newPlayerInfo = false;
+		}
+		unsigned int curTemporalBit = timeInfo.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[0] % temporalAmount;
+		unsigned int curVisCellChannel = (curTemporalBit / 32) % 4;
+		unsigned int curMask = (~(0x00000001 << (curTemporalBit % 32)));
+		for (unsigned int i = 0; i != maxPlayers; i++)
+			for (unsigned int j = 0; j != maxPlayers; j++)
+			{
+				unsigned int curCellID = i * maxPlayers + j;
+				playerVisMatrix[curCellID].visCell[curVisCellChannel] &= curMask;
+
+				if (temporalAmount < 32) playerVisMatrix[curCellID].visCell[0] &= (0xFFFFFFFF >> (32 - temporalAmount));
+				else if (temporalAmount < 64) playerVisMatrix[curCellID].visCell[1] &= (0xFFFFFFFF >> (64 - temporalAmount));
+				else if (temporalAmount < 96) playerVisMatrix[curCellID].visCell[2] &= (0xFFFFFFFF >> (96 - temporalAmount));
+				else if (temporalAmount < 128) playerVisMatrix[curCellID].visCell[3] &= (0xFFFFFFFF >> (128 - temporalAmount));
+			}
+		visibilityMatrixBuf.UploadSubData(0, playerVisMatrix.data(), (unsigned int)playerVisMatrix.size() * sizeof(playerVisData));
+		RTScene & rtSceneRef = mainSubmissionRef->rtScene;
+		bool rewriteDescriptoSets = false;
+		unsigned long long curSceneId = mainSubmissionRef->SceneID();
+		if (curSceneId != lastSceneId)
+		{
+			lastSceneId = curSceneId;
+			rewriteDescriptoSets = true;
+			tracingResources.clear();
+			tracingResources.emplace_back(RESOURCE_RT_ACCEL_STRUCT, RT_RAYGEN, 0, 0, rtSceneRef);
+			tracingResources.emplace_back(RESOURCE_IMAGE_STORE, RT_RAYGEN, 0, 1, testOutput, -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
+			tracingResources.emplace_back(RESOURCE_SAMPLER, RT_RAYGEN, 0, 2, *blueNoise);
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_ANYHIT, 0, 3, *GroupedRenderSubmission::SceneData->instancePropertiesBuffer);
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_RAYGEN, 0, 4, frustaBuf);
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_ANYHIT, 0, 5, visibilityMatrixBuf);
+			tracingResources.emplace_back(RESOURCE_UBO, RT_RAYGEN | RT_ANYHIT, 0, 6, timeBuf);
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_RAYGEN, 0, 7, limitsBuf);
+		}
+		tracelet.Submit(resSide, resSide, 1, tracingResources, rewriteDescriptoSets, rtShaderResourceSet);
+		visibilityMatrixBuf.DownloadSubData(0, playerVisMatrix.data(), (unsigned int)playerVisMatrix.size() * sizeof(playerVisData));
+		for (unsigned int i = 0; i != maxPlayers; i++)
+			for (unsigned int j = 0; j != maxPlayers; j++)
+			{
+				unsigned int curCellID = i * maxPlayers + j;
+				if (temporalAmount < 32) playerVisMatrix[curCellID].visCell[0] &= (0xFFFFFFFF >> (32 - temporalAmount));
+				else if (temporalAmount < 64) playerVisMatrix[curCellID].visCell[1] &= (0xFFFFFFFF >> (64 - temporalAmount));
+				else if (temporalAmount < 96) playerVisMatrix[curCellID].visCell[2] &= (0xFFFFFFFF >> (96 - temporalAmount));
+				else if (temporalAmount < 128) playerVisMatrix[curCellID].visCell[3] &= (0xFFFFFFFF >> (128 - temporalAmount));
+			}
+		timeInfo.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[0]++;
+		timeBuf.UploadSubData(0, &timeInfo, sizeof(timeInfo));
+	}
+}
+
+unsigned int HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::CanSee(unsigned int viewer, unsigned int subject)
+{
+	unsigned int res = playerVisMatrix[subject * maxPlayers + viewer].visCell[0];
+	res |= playerVisMatrix[subject * maxPlayers + viewer].visCell[1];
+	res |= playerVisMatrix[subject * maxPlayers + viewer].visCell[2];
+	res |= playerVisMatrix[subject * maxPlayers + viewer].visCell[3];
+	return res;
+}
+
+/*
+	******************************************************
+	****************End of SauRay(TM) code****************
+	******************************************************
+*/
+
 void HIGHOMEGA::RENDER::PASSES::TemporalAccumulateClass::Create(TriClass &PostProcessTri, GatherResolveClass & GatherResolve, PathTraceClass & PathTrace)
 {
 	pathTraceRef = &PathTrace;
@@ -5972,6 +6199,24 @@ void HIGHOMEGA::RENDER::PASSES::DoFClass::SetMidScreenMessage()
 void HIGHOMEGA::RENDER::PASSES::DoFClass::SetIsOnLadder(bool isOnLadder)
 {
 	onLadderMsg = isOnLadder;
+}
+
+void HIGHOMEGA::RENDER::PASSES::SaurayDisplayTestClass::Create(TriClass & PostProcessTri, SaurayTraceClass & SaurayTrace)
+{
+	submission.Add(*PostProcessTri.triModelInstance);
+	submission.Create(Instance);
+
+	submission.SetFrameBuffer(Instance.swapChainFrameBuffer());
+
+	shader.Create("shaders/postprocess.vert.spv", "main", "shaders/saurayTestOutput.frag.spv", "main");
+	shader.AddResource(RESOURCE_UBO, VERTEX, 0, 0, PostProcessTri.triFrustum.Buffer);
+	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 1, SaurayTrace.testOutput);
+	submission.SetShader("default", shader);
+}
+
+void HIGHOMEGA::RENDER::PASSES::SaurayDisplayTestClass::Render()
+{
+	if (!HIGHOMEGA::EVENTS::windowMinimized) submission.MakeAsync().Render();
 }
 
 void HIGHOMEGA::RENDER::PASSES::SplashDisplayClass::Create(TriClass & PostProcessTri)

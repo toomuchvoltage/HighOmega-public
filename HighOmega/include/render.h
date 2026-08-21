@@ -59,6 +59,7 @@ namespace HIGHOMEGA
 		namespace PASSES
 		{
 			class PathTraceClass;
+			class SaurayTraceClass;
 			class TemporalAccumulateClass;
 			void GetCubeFaceLookUp(unsigned int faceIdx, vec3& look, vec3& up);
 		}
@@ -137,7 +138,6 @@ namespace HIGHOMEGA
 			float emissivity;
 			float refractiveIndex;
 			bool dielectric;
-			bool parallaxOcclusionMapping;
 			vec2 uvOffset;
 			float heightMapDisplaceFactor;
 			float subDivAmount;
@@ -146,14 +146,18 @@ namespace HIGHOMEGA
 			bool mipmap;
 			bool postProcess;
 			bool isAlphaKeyed;
+			bool parallaxOcclusionMapping;
 			bool isDecal;
 			bool backDropGlass;
 			bool holographicInParticleScene;
 			bool perVertexVelocity;
 			bool isViewerRelative;
 			bool isAlphaBlending;
+			bool scattering;
 
 			int renderOrder;
+			unsigned int playerId = 0xFFFFFFFFu;
+			unsigned char rayMask = 0xFFu;
 
 			PipelineFlags pipelineFlags;
 
@@ -723,7 +727,7 @@ namespace HIGHOMEGA
 			public:
 				ImageClass worldPosAttach, normalAttach;
 			};
-			#define HIGHOMEGA_TEMPORAL_TRAIL_AMOUNT 10
+#define HIGHOMEGA_TEMPORAL_TRAIL_AMOUNT 10
 			class SingleComputeClass
 			{
 			protected:
@@ -1046,6 +1050,58 @@ namespace HIGHOMEGA
 				void Create(PathTraceClass & PathTrace);
 				void Submit();
 			};
+			class SaurayTraceClass : public OffScreenPassClass, public RTPass, public BlueNoiseHolderClass
+			{
+			private:
+				ShaderResourceSet rtShaderResourceSet2;
+				std::vector<ShaderResource> tracingResources2;
+				RTTracelet tracelet2;
+				unsigned long long lastSceneId2 = 0ull;
+
+				struct playerVisData
+				{
+					unsigned int visCell[4];
+				};
+				struct timeStruct
+				{
+					unsigned int frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[4];
+				} timeInfo;
+				BufferClass frustaBuf, limitsBuf, visibilityMatrixBuf, timeBuf;
+				unsigned int playerResSide;
+				unsigned int maxPlayers;
+				unsigned int maxPlayerSqrt;
+				unsigned int resSide;
+				bool newPlayerInfo = false;
+				unsigned int temporalAmount = 0;
+				GroupedTraceSubmission *mainSubmissionRef = nullptr;
+
+			public:
+				struct playerFrustum
+				{
+					float eyeGeomRad[4];
+					float eye2Whr[4];
+					unsigned int lookUpLook2Up2[4];
+					float geomCentYScale[4];
+					unsigned int maskEnabledReserved;
+				};
+				std::vector<playerFrustum> playerFrusta;
+				struct playerLimit
+				{
+					float aabbLim[20];
+					float corners[24];
+				};
+				std::vector<playerLimit> playerLimits;
+
+				std::vector<playerVisData> playerVisMatrix;
+				ImageClass testOutput;
+
+				void SetPlayer(unsigned int playerId, unsigned char otherTeamId, const vec3 & eye, const vec3 & look, const vec3 & up, const vec3 & eye2, const vec3 & look2, const vec3 & up2, float inYFov, float inWhr, vec3 & geomCent, float geomRad);
+				void RemovePlayer(unsigned int playerId);
+				void Create(GroupedTraceSubmission & mainSubmission, unsigned int inpMaxPlayers, unsigned int inpResSide, unsigned int inpHistoryAmount, bool debugMode);
+				void PrePass();
+				void Render();
+				unsigned int CanSee(unsigned int viewer, unsigned int subject);
+			};
 			class TemporalAccumulateClass : public OffScreenPassClass
 			{
 			private:
@@ -1065,7 +1121,7 @@ namespace HIGHOMEGA
 			class SpatialDenoiseClass
 			{
 			private:
-				ShaderResourceSet shaderH,shaderV;
+				ShaderResourceSet shaderH, shaderV;
 				PathTraceClass *pathTraceRef;
 
 			public:
@@ -1185,6 +1241,12 @@ namespace HIGHOMEGA
 				void SetIsOnLadder(bool isOnLadder);
 				void Create(TriClass & PostProcessTri, GatherResolveClass & GatherPass, MoBlurClass & MoBlur);
 				void Render(float inpAlpha);
+			};
+			class SaurayDisplayTestClass : public SinglePassClass
+			{
+			public:
+				void Create(TriClass & PostProcessTri, SaurayTraceClass & SaurayTrace);
+				void Render();
 			};
 			class SplashDisplayClass : public SinglePassClass
 			{

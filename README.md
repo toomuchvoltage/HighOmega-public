@@ -1,72 +1,55 @@
-# HighOmega Game Engine
+# SauRay<sup>TM</sup> for vkQuake2
 
-# Powering:
-* [![The HighOmega v3.0 debut demo](https://www.youtube.com/watch?v=8IRNQupyoIs)](https://www.youtube.com/watch?v=8IRNQupyoIs)
-![Debut Demo gif](marketing/github_debutdemo.gif)
+This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](https://sauray.tech) for [our vkQuake2 flavor](https://github.com/toomuchvoltage/SauRay/tree/master/vkQuake2). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
 
-* [![C.L.A.S.H: Colonial Life Advancing Self-sustained Hemisphere - Chapter 1](https://store.steampowered.com/app/4796200/)](https://store.steampowered.com/app/4796200/)
-![C.L.A.S.H gif](marketing/github_clash.gif)
-
-* [![SauRay(TM) Antiwallhack middleware](https://sauray.tech)](https://sauray.tech)
-![SauRay(TM) gif](marketing/github_sauray.gif)
-
-# Features:
-
-* Its own physics solver:
-  - Sequential impulse based solver with shock propagation and constraint support.
-  - Spring based cloth and pressure based soft bodies.
-  - Support for buoyancy via bobbies. Features linear and non-linear fluid drag.
-  - Fast collision detection directly against detailed geometry using CWBVH8: https://research.nvidia.com/publication/2017-07_efficient-incoherent-ray-traversal-gpus-through-compressed-wide-bvhs .
-* Built-in geometry library used for live in-game cutting and shatter effects.
-* A world streaming system with parallel asset loading and preparation.
-* Built in multimedia functionalities and UI system. Only external dependencies are OpenAL-Soft, a modified version of LibKTX2 (https://github.com/toomuchvoltage/KTX-Software) and SDL2.
-* Efficient and multi-threaded: separate threads for streaming, rendering, audio, entities, intersection detection, collision resolution, live boolean operations on geometry and compute based tessellation.
-* Two-file Vulkan wrapper providing for easy rendering backend substitution. Uses Vulkan 1.1 with extensions.
-* A rendering pipeline featuring:
-  - A hardware pathtraced/denoised path via cross-vendor Khronos raytracing extensions.
-  - A software pathtraced/denoised path via SDF-BVHs (SDF leaves sitting on a CWBVH8).
-  - Cascaded cubic irradiance caches/probes in worldspace.
-  - Both paths heavily optimized with very few CPU bottlenecks.
-  - Visibility buffer based rendering with deferred materials. Driven via compute-based two-pass occlusion culling and indirect rendering.
-  - Per-object MoBlur, volumetric fog, cut-off screenspace decals, DoF and much more.
-* SSE4.1, AVX and F16C optimized vector math library.
-* Single header simple serialization/de-serialization library alongside support for .ini files.
-* Very flexible mesh file format with support for world streaming data, indexed geometry, skinning data, armature setup, keyframing information and inclusion of arbitrary meta-data.
-* Slim readable source code: ~32k lines of C++ and ~14k lines of GLSL shaders.
-
-# How to use:
-
-The prerequisites are:
-
-* VulkanSDK `1.4.313.2` or higher.
-* Visual Studio Community 2022.
-
-**BEFORE YOUR FIRST RUN OF THE DEBUT DEMO:** Run `HighOmega/publishscript/publishscript.bat` to compress textures. It will use less VRAM and run faster.
-
-Simply open `HighOmega.sln`, compile and enjoy the demo. Minimum supported video card for the engine is an nVidia GeForce 1050Ti.
-
-**NOTE:** Some source art assets for the demo were removed due to restrictions on redistribution. Re-running `publishscript.bat` with the parameter `redo` may remove their generated assets by mistake. Simply discard local changes through Git in that event.
-
-# Content creation
-
-![SauRay(TM) gif](marketing/github_testmap.gif)
-
-The primary platform for creating content for this engine is Blender.
-Install `Blender 4.0` (or higher) and the `3MDconvert.py` plugin found in `HighOmega/source_material/exporter`.
-Since nearly all meta-data parsed by the engine are on `Object custom properties`, installing the `Copy Attributes Menu` addon is also recommended.
-Setting `pipelineSetupReturn.newMapBelong = "source_material/dev_test_maps/test_zones/"` in `main.cpp` will take you to the engine test map used for testing various features.
-Opening `HighOmega/source_material/dev_test_maps/test_zones/test_zones.blend` will show you how this environment is made. It must be exported with the `Terrain export` flag checked on the export dialog.
-Unchecking this usually means that you are working on an external module that can be linked via linked collections.
-This map has plenty of examples of how this is done, including linked collections inside linked collections that can recursively bring in objects such as rigid bodies with the custody chain intact.
-
-# Modifying shaders
-
-The shaders are located in `HighOmega/source_material/shaders`. If you wish to modify them:
-
-* Re-run `spirv-compiler.bat`.
-* Followed by re-running `spirv-optimizer.bat` in `HighOmega/shaders/`. This both optimizes the shaders as well as regenerates `encodedshaders.h` which is embedded in the binary and used by the engine.
-* Finally, recompile the solution once more. It will only recompile `gl.cpp` in all likelihood and relink.
+If you are unfamiliar with SauRay<sup>TM</sup>, please read [our technical brief](http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf) or visit [our website](https://sauray.tech).
 
 # License
 
-M.I.T.
+The point of this license is protection and not to be rampantly litigious. If you are really worried about reading patented source code: it's `sauray.cpp`, clearly marked parts of `render.cpp` and the raytracing shaders.
+Implementation details pertaining to SauRay<sup>TM</sup> are covered under [US20220219086A1](https://patents.google.com/patent/US20220219086A1) and are provided under the following license:
+
+```
+Copyright © 2023 TooMuchVoltage Software Inc. This notice shall always be coupled with any SauRay(TM) implementation and must be redistributed alongside it.
+
+This implementation of US20220219086A1 is provided royalty free for either of the following:
+
+* Games with gross revenues of under one(1) million dollars CAD.
+* Games with at least a publically distributed moddable server binary with which SauRay(TM) is successfully integrable.
+
+Public distribution requires either a public download link or a relatively simple registration and download process. If you are unsure of your registration process's straightforwardness, reach out directly.
+
+Free open-source games (i.e. Cube/Sauerbraten or Xonotic) automatically qualify since successful SauRay(TM) integration is ultimately feasible with sufficient effort.
+
+Open source games with non-Libre licenses (i.e. non-GPL, non-MIT) also qualify as long as the license is no further restrictive than that of Quake(idTech) II's. If unsure of whether your source code redistribution license is permissive enough, please reach out directly.
+
+For games where at least the distributed server component is either open-source or moddable (in a manner permissible by the IP owner) the game must be sufficiently thin-client so that a SauRay(TM) integration does not result in crashes or defects that largely break the game in most multiplayer game modes. If you are unsure of whether your distributed binaries qualify for this category, please get in touch directly.
+
+We can be reached at the email address: sauray@toomuchvoltage.com or using the contact information found on the website https://sauray.tech .
+
+If your game does not qualify under either of the above categories, contact us for a commercial license. The covered source files are protected by copyright and the aforementioned terms will apply beyond the life of US20220219086A1.
+
+All games using US20220219086A1 or this implementation of it must clearly declare that they're using it in a way noticeable and comprehensible by an average player of the game in the English language.
+
+Beyond what is stated in http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf this source code does not provide any warranties of merchantability or fitness for any particular purpose.
+```
+
+All else -- i.e. regular HighOmega source code -- is provided under the MIT license. A complete version of HighOmega will be provided under the MIT license at a later date.
+
+# Requirements
+
+Vulkan SDK and Visual Studio 2022 are required to compile. A video card with hardware accelerated ray-tracing is required. Note that with increased player count, raytracing and compute demands of the card increase. However, given that Quake II servers have a tickrate of 10 (100ms per state update) and that SauRay<sup>TM</sup> can (and probably should) run async in most cases, it should be rather difficult to hit or exceed this limit.
+
+# How to Compile and Use
+
+Open the Visual Studio project and compile. Pick `Release` unless you're debugging. This project produces a static library (in `x64/Release`) that [our vkQuake2 flavor](https://github.com/toomuchvoltage/SauRay/tree/master/vkQuake2) compiles against (needs to be dropped in `ext/lib`).
+
+In the event that you modify raytracing shaders in `source_material/shaders`:
+* Run `spirv-compiler.bat` in the same folder
+* Run `spirv-optimizer.bat` in the `shaders` folder for generating a new `encodedshaders.h`
+* Recompile the project
+
+# Contact Info
+
+Either email [sauray@toomuchvoltage.com](mailto:sauray@toomuchvoltage.com) or visit the contact page on [SauRay<sup>TM</sup>'s website](https://sauray.tech).
+For extension requests, you can also open issues on this GitHub repository as well.

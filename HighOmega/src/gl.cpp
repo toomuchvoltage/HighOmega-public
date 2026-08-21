@@ -57,7 +57,7 @@ thread_local unsigned long long ThreadID = threadSafeMersenneTwister64Bit();
 
 std::mutex HIGHOMEGA::GL::globalCompute_PSO_DSL_Cache_mutex;
 
-#define HIGHOMEGA_ONE_GIANT_VERTBUFFER_SIZE (1024 * 1024 * 300)
+#define HIGHOMEGA_ONE_GIANT_VERTBUFFER_SIZE (1024 * 1024 * 1536)
 
 std::vector<std::tuple<int, unsigned long long, SubAlloc>> HIGHOMEGA::GL::MEMORY_MANAGER::AllocMem(VkDevice & inpDev, VkMemoryAllocateInfo & allocInfo, VkMemoryRequirements & memReq, MEMORY_MAP_TYPE memoryMapType, bool useSparseResources, bool oneGiantVertBuffer)
 {
@@ -489,8 +489,8 @@ PFN_vkGetAccelerationStructureDeviceAddressKHR RTInstance::fpGetAccelerationStru
 PFN_vkGetRayTracingShaderGroupHandlesKHR RTInstance::fpGetRayTracingShaderGroupHandlesKHR = VK_NULL_HANDLE;
 VkPhysicalDeviceRayTracingPipelinePropertiesKHR RTInstance::raytracingPipelineProperties = { };
 
-VkBool32 HIGHOMEGA::GL::DEBUG_MESSAGE(VkDebugReportFlagsEXT flags,VkDebugReportObjectTypeEXT objType,uint64_t srcObject,size_t location,
-											 int32_t msgCode,const char* pLayerPrefix,const char* pMsg,void* pUserData)
+VkBool32 HIGHOMEGA::GL::DEBUG_MESSAGE(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objType, uint64_t srcObject, size_t location,
+	int32_t msgCode, const char* pLayerPrefix, const char* pMsg, void* pUserData)
 {
 	std::string outString = "";
 	if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) {
@@ -592,7 +592,7 @@ void WindowClass::Make(std::string appName, int startx, int starty, int w, int h
 	if (win == nullptr) { RemovePast();  FATAL_ERROR("Could not create window"); }
 	haveRenderer = true;
 
-	SDL_SetWindowGrab(win, SDL_TRUE);
+	//SDL_SetWindowGrab(win, SDL_TRUE);
 
 	struct SDL_SysWMinfo wmInfo;
 	SDL_VERSION(&wmInfo.version);
@@ -735,7 +735,7 @@ InstanceClass::InstanceClass()
 	haveSwapChain = false;
 }
 
-void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool requestHWRT, bool headless)
+void InstanceClass::Make(bool validationLayer, WindowClass &inpWindow, bool requestHWRT, bool headless)
 {
 	int validationLayerCount = 1;
 	const char *validationLayerNames[] =
@@ -1058,19 +1058,19 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 
 	if (foundFormat == false) { RemovePast(); FATAL_ERROR("No supported format found"); }
 
-	fpGetPhysicalDeviceSurfaceSupportKHR = (PFN_vkGetPhysicalDeviceSurfaceSupportKHR)vkGetInstanceProcAddr (instance,"vkGetPhysicalDeviceSurfaceSupportKHR");
-	fpGetPhysicalDeviceSurfaceCapabilitiesKHR = (PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)vkGetInstanceProcAddr (instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
-	fpGetPhysicalDeviceSurfaceFormatsKHR = (PFN_vkGetPhysicalDeviceSurfaceFormatsKHR)vkGetInstanceProcAddr (instance, "vkGetPhysicalDeviceSurfaceFormatsKHR");
-	fpGetPhysicalDeviceSurfacePresentModesKHR = (PFN_vkGetPhysicalDeviceSurfacePresentModesKHR)vkGetInstanceProcAddr (instance, "vkGetPhysicalDeviceSurfacePresentModesKHR");
+	fpGetPhysicalDeviceSurfaceSupportKHR = (PFN_vkGetPhysicalDeviceSurfaceSupportKHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceSurfaceSupportKHR");
+	fpGetPhysicalDeviceSurfaceCapabilitiesKHR = (PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+	fpGetPhysicalDeviceSurfaceFormatsKHR = (PFN_vkGetPhysicalDeviceSurfaceFormatsKHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceSurfaceFormatsKHR");
+	fpGetPhysicalDeviceSurfacePresentModesKHR = (PFN_vkGetPhysicalDeviceSurfacePresentModesKHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceSurfacePresentModesKHR");
 
-	fpCreateSwapchainKHR = (PFN_vkCreateSwapchainKHR)vkGetDeviceProcAddr (device,"vkCreateSwapchainKHR");
-	fpDestroySwapchainKHR = (PFN_vkDestroySwapchainKHR)vkGetDeviceProcAddr (device,"vkDestroySwapchainKHR");
-	fpGetSwapchainImagesKHR = (PFN_vkGetSwapchainImagesKHR)vkGetDeviceProcAddr (device,"vkGetSwapchainImagesKHR");
-	fpAcquireNextImageKHR = (PFN_vkAcquireNextImageKHR)vkGetDeviceProcAddr (device,"vkAcquireNextImageKHR");
-	fpQueuePresentKHR = (PFN_vkQueuePresentKHR)vkGetDeviceProcAddr (device,"vkQueuePresentKHR");
+	fpCreateSwapchainKHR = (PFN_vkCreateSwapchainKHR)vkGetDeviceProcAddr(device, "vkCreateSwapchainKHR");
+	fpDestroySwapchainKHR = (PFN_vkDestroySwapchainKHR)vkGetDeviceProcAddr(device, "vkDestroySwapchainKHR");
+	fpGetSwapchainImagesKHR = (PFN_vkGetSwapchainImagesKHR)vkGetDeviceProcAddr(device, "vkGetSwapchainImagesKHR");
+	fpAcquireNextImageKHR = (PFN_vkAcquireNextImageKHR)vkGetDeviceProcAddr(device, "vkAcquireNextImageKHR");
+	fpQueuePresentKHR = (PFN_vkQueuePresentKHR)vkGetDeviceProcAddr(device, "vkQueuePresentKHR");
 	fpWaitSemaphoresKHR = (PFN_vkWaitSemaphoresKHR)vkGetDeviceProcAddr(device, "vkWaitSemaphoresKHR");
 
-	fpCreateDescriptorUpdateTemplateKHR = (PFN_vkCreateDescriptorUpdateTemplateKHR)vkGetDeviceProcAddr (device, "vkCreateDescriptorUpdateTemplateKHR");
+	fpCreateDescriptorUpdateTemplateKHR = (PFN_vkCreateDescriptorUpdateTemplateKHR)vkGetDeviceProcAddr(device, "vkCreateDescriptorUpdateTemplateKHR");
 	fpUpdateDescriptorSetWithTemplateKHR = (PFN_vkUpdateDescriptorSetWithTemplateKHR)vkGetDeviceProcAddr(device, "vkUpdateDescriptorSetWithTemplateKHR");
 	fpDestroyDescriptorUpdateTemplateKHR = (PFN_vkDestroyDescriptorUpdateTemplateKHR)vkGetDeviceProcAddr(device, "vkDestroyDescriptorUpdateTemplateKHR");
 
@@ -1113,7 +1113,7 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 	}
 
 	std::vector<VkBool32> supportsPresent;
-	
+
 	if (!headless)
 	{
 		supportsPresent = std::vector<VkBool32>(queueCount);
@@ -2306,7 +2306,8 @@ void RasterletClass::PrepareSubmission(std::vector <PSO_DSL_DS_GeomInstPairing> 
 		VkClearValue curVal;
 		curVal.depthStencil = { inpDynamicFlags.depth_clear, inpDynamicFlags.stencil_clear };
 		clearValues.push_back(curVal);
-	} catch (...) { FATAL_ERROR("Could not create swap chain command buffers"); }
+	}
+	catch (...) { FATAL_ERROR("Could not create swap chain command buffers"); }
 
 	VkRenderPassBeginInfo renderPassBeginInfo = {};
 	renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3277,7 +3278,7 @@ void HIGHOMEGA::GL::ShaderStage::Shader(InstanceClass &inpPtrToInstance, std::st
 		shaderBinary[i] = ~shaderBinary[i];
 #endif
 
-	if (result != VK_SUCCESS || !shaderModule ) FATAL_ERROR("Failed to create shader module");
+	if (result != VK_SUCCESS || !shaderModule) FATAL_ERROR("Failed to create shader module");
 
 	stage = {};
 	stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -4043,7 +4044,7 @@ void HIGHOMEGA::GL::ImageClass::CreateImageView(DEPTH_STENCIL_MODE depthStencilM
 	VkImageViewCreateInfo attachmentView = {};
 	attachmentView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 	attachmentView.pNext = VK_NULL_HANDLE;
-	attachmentView.format = useFormat?((VkFormat)inpFormat):(depthStencilMode != NONE?cachedInstance->selectedDepthFormat:cachedInstance->colorFormat);
+	attachmentView.format = useFormat ? ((VkFormat)inpFormat) : (depthStencilMode != NONE ? cachedInstance->selectedDepthFormat : cachedInstance->colorFormat);
 	if (depthStencilMode == NONE) attachmentView.components = { VK_COMPONENT_SWIZZLE_R,VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_B,VK_COMPONENT_SWIZZLE_A };
 	switch (depthStencilMode)
 	{
@@ -4081,7 +4082,7 @@ void HIGHOMEGA::GL::ImageClass::CreateImage(bool depthStencil, bool useFormat, F
 	VkImageCreateInfo imageCreateStruct = {};
 	imageCreateStruct.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 	imageCreateStruct.pNext = VK_NULL_HANDLE;
-	imageCreateStruct.imageType = GetVkImageTypeFromDim (numDims);
+	imageCreateStruct.imageType = GetVkImageTypeFromDim(numDims);
 	imageCreateStruct.format = useFormat ? ((VkFormat)inpFormat) : (depthStencil ? cachedInstance->selectedDepthFormat : cachedInstance->colorFormat);
 	imageCreateStruct.extent = { (uint32_t)w, (uint32_t)h, (uint32_t)d };
 	imageCreateStruct.pQueueFamilyIndices = &cachedInstance->allQueues[queueType].nodeIndex;
@@ -4469,12 +4470,12 @@ void HIGHOMEGA::GL::ImageClass::CreateStandaloneImage(InstanceClass & ptrToInsta
 	if (createSampler) {
 		try {
 			CreateSampler(linearFiltering ? ImageClass::MIN_MAG_FILTER::MIN_MAG_LINEAR : ImageClass::MIN_MAG_FILTER::MIN_MAG_NEAREST,
-						  linearFiltering ? ImageClass::MIN_MAG_FILTER::MIN_MAG_LINEAR : ImageClass::MIN_MAG_FILTER::MIN_MAG_NEAREST,
-						  ImageClass::MIPMAP_MODE::MIPMAP_LINEAR,
-						  clampSamples ? ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE : ImageClass::TEXTURE_ADDRESS_MODE::REPEAT,
-						  clampSamples ? ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE : ImageClass::TEXTURE_ADDRESS_MODE::REPEAT,
-						  clampSamples ? ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE : ImageClass::TEXTURE_ADDRESS_MODE::REPEAT,
-						  0.0f, 0.0f, 1.0f, false, 1);
+				linearFiltering ? ImageClass::MIN_MAG_FILTER::MIN_MAG_LINEAR : ImageClass::MIN_MAG_FILTER::MIN_MAG_NEAREST,
+				ImageClass::MIPMAP_MODE::MIPMAP_LINEAR,
+				clampSamples ? ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE : ImageClass::TEXTURE_ADDRESS_MODE::REPEAT,
+				clampSamples ? ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE : ImageClass::TEXTURE_ADDRESS_MODE::REPEAT,
+				clampSamples ? ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE : ImageClass::TEXTURE_ADDRESS_MODE::REPEAT,
+				0.0f, 0.0f, 1.0f, false, 1);
 		}
 		catch (...) { RemovePast(); FATAL_ERROR("Could not create sampler"); }
 	}
@@ -4527,7 +4528,7 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 
 	is3D = inIs3D;
 	isArray = inIsArray;
-	
+
 	if (is3D)
 	{
 		depth = inD;
@@ -4691,7 +4692,8 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 	TEXTURE_DIM selectedDim = _2D;
 	if (is3D) {
 		selectedDim = _3D;
-	} else if (isArray) {
+	}
+	else if (isArray) {
 		selectedDim = _2D_ARRAY;
 	}
 
@@ -4817,7 +4819,7 @@ void HIGHOMEGA::GL::ImageClass::ClearColors(std::vector <ImageClass *> & images,
 
 		VkImageSubresourceRange subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS };
 		VkClearColorValue clearWith;
-		if ( clearColor.useFloat )
+		if (clearColor.useFloat)
 			clearWith = { clearColor.floatRgb.x, clearColor.floatRgb.y, clearColor.floatRgb.z, clearColor.floatAlpha };
 		else
 		{
@@ -5108,7 +5110,7 @@ void HIGHOMEGA::GL::FramebufferClass::AddColorAttachment(ImageClass & inAttach)
 void HIGHOMEGA::GL::FramebufferClass::AddColorAttachmentWithLayer(ImageClass & inAttach, unsigned int layer)
 {
 	colorAttachments.push_back(&inAttach);
-	colorAttachmentLayers.push_back(layer+1);
+	colorAttachmentLayers.push_back(layer + 1);
 }
 
 void HIGHOMEGA::GL::FramebufferClass::SetDepthStencil(ImageClass & inAttach)
@@ -5168,7 +5170,7 @@ void HIGHOMEGA::GL::FramebufferClass::Create(RENDER_MODE inpMode, InstanceClass 
 	}
 	else
 	{
-		for (int i = 0;i != colorAttachments.size();i++)
+		for (int i = 0; i != colorAttachments.size(); i++)
 		{
 			VkAttachmentDescription curAttach;
 			curAttach.format = (VkFormat)colorAttachments[i]->format;
@@ -5304,9 +5306,9 @@ void HIGHOMEGA::GL::FramebufferClass::Create(RENDER_MODE inpMode, InstanceClass 
 	else
 	{
 		std::vector<VkImageView> attachmentsViews;
-		for (int i = 0;i != colorAttachments.size();i++)
+		for (int i = 0; i != colorAttachments.size(); i++)
 		{
-			if (colorAttachmentLayers[i] == 0 )
+			if (colorAttachmentLayers[i] == 0)
 				attachmentsViews.push_back(colorAttachments[i]->view);
 			else
 				attachmentsViews.push_back(colorAttachments[i]->layerView[colorAttachmentLayers[i] - 1]);
@@ -5358,9 +5360,9 @@ void HIGHOMEGA::GL::FramebufferClass::Create(RENDER_MODE inpMode, InstanceClass 
 
 		try {
 			attachmentsSampler.CreateSampler(ImageClass::MIN_MAG_FILTER::MIN_MAG_NEAREST, ImageClass::MIN_MAG_FILTER::MIN_MAG_NEAREST,
-											 ImageClass::MIPMAP_MODE::MIPMAP_LINEAR,
-											 ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE, ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE, ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE,
-											 0.0f, 0.0f, 1.0f, false, 1.0f);
+				ImageClass::MIPMAP_MODE::MIPMAP_LINEAR,
+				ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE, ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE, ImageClass::TEXTURE_ADDRESS_MODE::CLAMP_TO_EDGE,
+				0.0f, 0.0f, 1.0f, false, 1.0f);
 		}
 		catch (...) {
 			RemovePast(); FATAL_ERROR("Could not create the attachment sampler");
@@ -5438,7 +5440,7 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::CreateAccelStruct(bool isBlas, VkAcce
 	if (isBlas)
 	{
 		VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeomInfo{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
-		accelerationStructureBuildGeomInfo.flags = inpImmutable ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR : (VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR  | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR);
+		accelerationStructureBuildGeomInfo.flags = inpImmutable ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR : (VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR);
 		accelerationStructureBuildGeomInfo.pNext = VK_NULL_HANDLE;
 		accelerationStructureBuildGeomInfo.geometryCount = 1;
 		accelerationStructureBuildGeomInfo.pGeometries = inpGeom;
@@ -5721,6 +5723,16 @@ void HIGHOMEGA::GL::KHR_RT::RTGeometry::SetDirty()
 	dirty = true;
 }
 
+void HIGHOMEGA::GL::KHR_RT::RTGeometry::SetMask(unsigned char inpMask)
+{
+	rayMask = inpMask;
+}
+
+unsigned int HIGHOMEGA::GL::KHR_RT::RTGeometry::GetMask()
+{
+	return rayMask;
+}
+
 HIGHOMEGA::GL::InstanceClass *HIGHOMEGA::GL::DescriptorSetLayout::ptrToInstance = nullptr;
 
 void HIGHOMEGA::GL::DescriptorSetLayout::RemovePast()
@@ -5926,7 +5938,7 @@ void HIGHOMEGA::GL::DescriptorSets::WriteDescriptorSets(std::vector<ShaderResour
 
 	VkResult result = vkAllocateDescriptorSets(ptrToInstance->device, &allocInfo, descriptorSets.data());
 	if (result != VK_SUCCESS)
-	{ 
+	{
 		{std::lock_guard<std::mutex> lk(descriptorPools.mtx);
 
 		descriptorPools.dir[ThreadID].elem.emplace_back();
@@ -6449,7 +6461,7 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::Add(unsigned long long inpId, unsigned int 
 			curInst.transform.matrix[i][j] = (i == j) ? 1.0f : 0.0f;
 
 	curInst.instanceCustomIndex = instanceId;
-	curInst.mask = 0xff;
+	curInst.mask = inpGeom.getRTGeom().GetMask();
 	curInst.instanceShaderBindingTableRecordOffset = 0;
 	curInst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
 

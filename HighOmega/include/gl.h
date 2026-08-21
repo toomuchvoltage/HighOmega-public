@@ -45,6 +45,11 @@
 
 namespace HIGHOMEGA
 {
+	namespace SAURAY
+	{
+		class SaurayClientInterfaceClass;
+		class SaurayPipelineSetupClass;
+	}
 	namespace GL
 	{
 		class InstanceClass;
@@ -120,7 +125,7 @@ namespace HIGHOMEGA
 			class RTTracelet;
 		}
 		VkBool32 DEBUG_MESSAGE(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objType, uint64_t srcObject, size_t location,
-							   int32_t msgCode, const char* pLayerPrefix, const char* pMsg, void* pUserData);
+			int32_t msgCode, const char* pLayerPrefix, const char* pMsg, void* pUserData);
 		class InstanceClass;
 		class RasterletClass;
 		class WindowClass : public CStyleWrapper
@@ -482,6 +487,8 @@ namespace HIGHOMEGA
 				VkAccelerationStructureBuildRangeInfoKHR traceGeomOffset;
 				bool created = false;
 				bool dirty = false;
+				bool immutable = true;
+				unsigned char rayMask = 0xFFu;
 
 				void RemoveRTGeom();
 			public:
@@ -491,6 +498,8 @@ namespace HIGHOMEGA
 				void SetGeom(BufferClass & vertBuffer, VkDeviceAddress giantVertBufferAddress, unsigned int triCount, unsigned int vertCount, unsigned int vertDataOffset, unsigned int indexDataOffset, unsigned int vertStride, bool isAlphaKeyed, bool inpImmutable, InstanceClass & inpInstance);
 				void CreateOrUpdate(blasBuildParams *inpParams = nullptr, unsigned long long* updateHash = nullptr);
 				void SetDirty();
+				void SetMask(unsigned char inpMask);
+				unsigned int GetMask();
 			};
 		}
 		class ImageClearColor
@@ -522,6 +531,7 @@ namespace HIGHOMEGA
 			friend class DescriptorSets;
 			friend class ShaderResource;
 			friend class InstanceClass;
+			friend class SAURAY::SaurayClientInterfaceClass;
 		public:
 			VkImage image;
 			VkImageView view;
@@ -553,6 +563,7 @@ namespace HIGHOMEGA
 				CLAMP_TO_BORDER = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
 				MIRROR_CLAMP_TO_EDGE = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE
 			};
+		public:
 			enum PROVIDED_IMAGE_DATA_TYPE
 			{
 				IMAGE_DATA_RGB = 0,
@@ -1215,6 +1226,7 @@ namespace HIGHOMEGA
 				friend class RTPipelineStateClass;
 				friend class RTTracelet;
 				friend class HIGHOMEGA::GL::ShaderResource;
+				friend class SAURAY::SaurayPipelineSetupClass;
 			private:
 				unsigned long long sceneId = 0ull, previousUpdateHash = 0ull;
 				InstanceClass *ptrToInstance;
@@ -1472,7 +1484,7 @@ namespace HIGHOMEGA
 			bool isAlphaKeyedCache;
 			bool breakableCache;
 			bool immutable = true;
-			
+
 		public:
 
 			~GeometryClass();
@@ -1526,7 +1538,7 @@ namespace HIGHOMEGA
 			DataPoints.clear();
 			DataPoints.reserve(sizeof...(a) + 1);
 			DataPoints.push_back(first);
-			(DataPoints.push_back(a),...);
+			(DataPoints.push_back(a), ...);
 		}
 	}
 }
