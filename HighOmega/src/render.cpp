@@ -744,7 +744,7 @@ void HIGHOMEGA::RENDER::Animation::GetPose(float fract, Pose & retPose)
 				retPose.pose[j].name = keyFrames[i].pose[j].name;
 				retPose.pose[j].bone = keyFrames[i].pose[j].bone * (1.0f - curFract) + curFract * keyFrames[i + 1].pose[j].bone;
 			}
-			return ;
+			return;
 		}
 	}
 }
@@ -769,7 +769,7 @@ void HIGHOMEGA::RENDER::Animation::GetPose(unsigned int providedKeyFrame, Pose &
 				retPose.pose[j].name = keyFrames[i].pose[j].name;
 				retPose.pose[j].bone = keyFrames[i].pose[j].bone * (1.0f - curFract) + curFract * keyFrames[i + 1].pose[j].bone;
 			}
-			return ;
+			return;
 		}
 	}
 }
@@ -1192,7 +1192,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, st
 		bool hasCols;
 		bool hasAnim;
 
-		if ( Mesh::getDataBlock(curPolyGroup, "COLS", &colsBlock) )
+		if (Mesh::getDataBlock(curPolyGroup, "COLS", &colsBlock))
 			hasCols = true;
 		else
 			hasCols = false;
@@ -1243,7 +1243,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::Model(HIGHOMEGA::MESH::Mesh & inpMesh, st
 
 		if (hasAnim)
 		{
-			 if ( !parentArmatureRef->rows[0][0].svalue(parentArmature) ) FATAL_ERROR("Could not get parent armature for graphics model load");
+			if (!parentArmatureRef->rows[0][0].svalue(parentArmature)) FATAL_ERROR("Could not get parent armature for graphics model load");
 		}
 
 		HIGHOMEGA::MESH::DataBlock *propsBlock = nullptr;
@@ -1639,7 +1639,7 @@ void HIGHOMEGA::RENDER::GraphicsModel::DownloadGeom(const std::string& groupId, 
 
 void HIGHOMEGA::RENDER::GraphicsModel::ChangeGeom(const std::string& groupId, std::vector<TriUV> & triList)
 {
-	GeometryClass *geomPtr = getGeometryById (groupId);
+	GeometryClass *geomPtr = getGeometryById(groupId);
 	if (!geomPtr) return;
 
 	std::vector <unsigned char> idxVertData;
@@ -2090,11 +2090,11 @@ void HIGHOMEGA::RENDER::GroupedRenderSubmission::CompileInstanceProperties(Insta
 	unsigned int attribs0 = 0u;
 
 	// Do we have a normal map?
-	if (inpMaterial.nrmName != "") 
+	if (inpMaterial.nrmName != "")
 		attribs0 |= 0x00000001;
 
 	// Do we have a roughness map?
-	if (inpMaterial.rghName != "") 
+	if (inpMaterial.rghName != "")
 		attribs0 |= 0x00000002;
 
 	// Is this a material smooth? (using vertex normals?)
@@ -3623,7 +3623,7 @@ void HIGHOMEGA::RENDER::FrustumClass::SetOrtho()
 
 	projection_matrix.i[0][3] = -(ortho_right + ortho_left)*right_left_inv;
 	projection_matrix.i[1][3] = -(ortho_top + ortho_bottom)*bottom_top_inv;
-	projection_matrix.i[2][3] = screen_near*near_far_inv;
+	projection_matrix.i[2][3] = screen_near * near_far_inv;
 	projection_matrix.i[3][3] = 1.0f;
 
 	modelviewprojection_matrix = projection_matrix * modelview_matrix;
@@ -3663,7 +3663,7 @@ void HIGHOMEGA::RENDER::FrustumClass::Update(const vec3& eyeInBuffer, const vec3
 	uboData.sideEyeZ[2] = sideVector.z;
 	uboData.sideEyeZ[3] = eyeInBuffer.z;
 	uboData.whrTanHalfFovY[0] = whrInBuffer;
-	uboData.whrTanHalfFovY[1] = tanf (((fovYForBuffer / 180.0f) * HIGHOMEGA_PI) * 0.5f);
+	uboData.whrTanHalfFovY[1] = tanf(((fovYForBuffer / 180.0f) * HIGHOMEGA_PI) * 0.5f);
 
 	if (initBuffer)
 	{
@@ -3766,13 +3766,13 @@ unsigned long long HIGHOMEGA::RENDER::WorldParamsClass::Populate(Mesh & inpMesh)
 		HIGHOMEGA::MESH::DataGroup &curPolyGroup = inpMesh.DataGroups[i];
 
 		float tmpFloat;
-		if ( !Mesh::getDataRowFloat(curPolyGroup, "PROPS", "sceneProps", tmpFloat)) continue;
+		if (!Mesh::getDataRowFloat(curPolyGroup, "PROPS", "sceneProps", tmpFloat)) continue;
 
-		if ( !Mesh::getDataRowVec3(curPolyGroup, "DESCRIPTION", "pos", allItems[curId].startPlayerPos)) FATAL_ERROR("Start player pos not found");
+		if (!Mesh::getDataRowVec3(curPolyGroup, "DESCRIPTION", "pos", allItems[curId].startPlayerPos)) FATAL_ERROR("Start player pos not found");
 		allItems[curId].firstPersonControls = Mesh::getDataRowFloat(curPolyGroup, "PROPS", "firstPersonControls", tmpFloat);
-		if ( !Mesh::getDataRowFloat(curPolyGroup, "PROPS", "lightShaftAmount", allItems[curId].lightShaftAmount)) allItems[curId].lightShaftAmount = 0.0f;
-		if ( !Mesh::getDataRowFloat(curPolyGroup, "PROPS", "lightShaftExtinction", allItems[curId].lightShaftExtinction)) allItems[curId].lightShaftExtinction = 0.98f;
-		if ( !Mesh::getDataRowFloat(curPolyGroup, "PROPS", "sunDirectLightStrength", allItems[curId].sunDirectLightStrength)) allItems[curId].sunDirectLightStrength = 1.0f;
+		if (!Mesh::getDataRowFloat(curPolyGroup, "PROPS", "lightShaftAmount", allItems[curId].lightShaftAmount)) allItems[curId].lightShaftAmount = 0.0f;
+		if (!Mesh::getDataRowFloat(curPolyGroup, "PROPS", "lightShaftExtinction", allItems[curId].lightShaftExtinction)) allItems[curId].lightShaftExtinction = 0.98f;
+		if (!Mesh::getDataRowFloat(curPolyGroup, "PROPS", "sunDirectLightStrength", allItems[curId].sunDirectLightStrength)) allItems[curId].sunDirectLightStrength = 1.0f;
 
 		allItems[curId].sunAngle = 0.0f;
 		allItems[curId].lastFrameTime = 0.0f;
@@ -3838,7 +3838,7 @@ float HIGHOMEGA::RENDER::WorldParamsClass::GetFrameTime()
 
 void HIGHOMEGA::RENDER::WorldParamsClass::AddSunAngle(float sunAngle)
 {
-	if (allItems.size() == 0) return ;
+	if (allItems.size() == 0) return;
 	if (allItems.begin()->second.forceSunAngle) return;
 	allItems.begin()->second.sunAngle += sunAngle;
 }
@@ -3895,7 +3895,7 @@ float HIGHOMEGA::RENDER::WorldParamsClass::GetSunAngle()
 
 vec3 HIGHOMEGA::RENDER::WorldParamsClass::SunDir()
 {
-	if (allItems.size() == 0) return vec3 (0.0f, 1.0f, 0.0f);
+	if (allItems.size() == 0) return vec3(0.0f, 1.0f, 0.0f);
 	return vec3(cosf(GetSunAngle()), sinf(GetSunAngle()), 0.0f).normalized();
 }
 
@@ -4597,9 +4597,9 @@ vec3 HIGHOMEGA::RENDER::PASSES::SkyDomeClass::SunWhite()
 vec3 HIGHOMEGA::RENDER::PASSES::SkyDomeClass::MoonLight()
 {
 	if (ptrWorldParams->isShowingAurora())
-		return AuroraGreen () * 0.75f;
+		return AuroraGreen() * 0.75f;
 	else
-		return NebulaBlue ();
+		return NebulaBlue();
 }
 
 vec3 HIGHOMEGA::RENDER::PASSES::SkyDomeClass::NebulaBlue()
@@ -4611,7 +4611,7 @@ vec3 HIGHOMEGA::RENDER::PASSES::SkyDomeClass::AddSkyColor()
 {
 	if (ptrWorldParams->isShowingAurora())
 	{
-		return AuroraGreen () * 0.5f;
+		return AuroraGreen() * 0.5f;
 	}
 	else
 	{
@@ -4632,7 +4632,7 @@ float HIGHOMEGA::RENDER::PASSES::SkyDomeClass::NightAmount()
 	{
 		return 0.0f;
 	}
-	else if ( ptrWorldParams->SunDir().y > -0.2f && ptrWorldParams->SunDir().y <= 0.0f )
+	else if (ptrWorldParams->SunDir().y > -0.2f && ptrWorldParams->SunDir().y <= 0.0f)
 	{
 		return sqrt(-ptrWorldParams->SunDir().y * 5.0f);
 	}
@@ -4650,8 +4650,8 @@ vec3 HIGHOMEGA::RENDER::PASSES::SkyDomeClass::SkyObjectLight()
 	}
 	else if (ptrWorldParams->SunDir().y > 0.0f && ptrWorldParams->SunDir().y < 0.2f)
 	{
-		float lightIntensity = sqrt (ptrWorldParams->SunDir().y * 5.0f);
-		return Lerp (SunOrange() * lightIntensity, SunWhite(), lightIntensity);
+		float lightIntensity = sqrt(ptrWorldParams->SunDir().y * 5.0f);
+		return Lerp(SunOrange() * lightIntensity, SunWhite(), lightIntensity);
 	}
 	else if (ptrWorldParams->SunDir().y > -0.2f && ptrWorldParams->SunDir().y < 0.0f)
 	{
@@ -4934,7 +4934,7 @@ void HIGHOMEGA::RENDER::PASSES::ClearSurfaceCacheClass::Create(PathTraceClass & 
 
 	shader.Create("shaders/clearSurfaceCache.comp.spv", "main");
 	shader.AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 0, radiosityMaps);
-	submission.MakeDispatch(Instance, std::string ("default"), shader, voxelizedXWorkGroups, voxelizedYWorkGroups, voxelizedZWorkGroups);
+	submission.MakeDispatch(Instance, std::string("default"), shader, voxelizedXWorkGroups, voxelizedYWorkGroups, voxelizedZWorkGroups);
 }
 
 void HIGHOMEGA::RENDER::PASSES::ClearSurfaceCacheClass::Submit()
@@ -5487,7 +5487,8 @@ void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::Create(GroupedTraceSubmission 
 	frustaBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SSBO, Instance, (void *)playerFrusta.data(), (unsigned int)(playerFrusta.size() * sizeof(playerFrustum)));
 	limitsBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SSBO, Instance, (void *)playerLimits.data(), (unsigned int)(playerLimits.size() * sizeof(playerLimit)));
 	visibilityMatrixBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SSBO, Instance, (void *)playerVisMatrix.data(), (unsigned int)(playerVisMatrix.size() * sizeof(playerVisData)));
-	timeBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_UBO, Instance, &timeInfo, (unsigned int)sizeof(timeInfo));
+	timeBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_UBO, Instance, (void *)&timeInfo, (unsigned int)sizeof(timeInfo));
+	sunDirBuf.Buffer(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_UBO, Instance, (void *)&sun, (unsigned int)sizeof(sun));
 
 	testOutput.CreateImageStore(Instance, R8G8B8A8UN, resSide, resSide, 1, _2D, false);
 
@@ -5496,7 +5497,7 @@ void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::Create(GroupedTraceSubmission 
 		if (debugMode)
 			rtShaderResourceSet.CreateRT("shaders/rtsauraytrace.rgen.spv", "main", "shaders/rtsauraytrace.rchit.spv", "main", "shaders/rtsauraytrace.rmiss.spv", "main", "shaders/rtsauraytrace.rahit.spv", "main");
 		else
-			rtShaderResourceSet.CreateRT("shaders/rtsauraytrace_release.rgen.spv", "main", "shaders/rtsauraytrace_release.rchit.spv", "main", "shaders/rtsauraytrace_release.rmiss.spv", "main", "shaders/rtsauraytrace_release.rahit.spv", "main");
+			rtShaderResourceSet.CreateRT("shaders/rtsauraytrace_release.rgen.spv", "main", "shaders/rtsauraytrace.rchit.spv", "main", "shaders/rtsauraytrace.rmiss.spv", "main", "shaders/rtsauraytrace.rahit.spv", "main");
 		rtShaderResourceSet2.CreateRT("shaders/rtsauraylimits.rgen.spv", "main", "shaders/rtsauraylimits.rchit.spv", "main", "shaders/rtsauraylimits.rmiss.spv", "main", "shaders/rtsauraylimits.rahit.spv", "main");
 		tracelet.Make(Instance);
 		tracelet2.Make(Instance);
@@ -5538,6 +5539,11 @@ void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::Render()
 			frustaBuf.UploadSubData(0, (void *)playerFrusta.data(), (unsigned int)playerFrusta.size() * sizeof(playerFrustum));
 			newPlayerInfo = false;
 		}
+		if (sunDirChanged)
+		{
+			sunDirBuf.UploadSubData(0, (void *)&sun, (unsigned int)sizeof(sun));
+			sunDirChanged = false;
+		}
 		unsigned int curTemporalBit = timeInfo.frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[0] % temporalAmount;
 		unsigned int curVisCellChannel = (curTemporalBit / 32) % 4;
 		unsigned int curMask = (~(0x00000001 << (curTemporalBit % 32)));
@@ -5561,14 +5567,15 @@ void HIGHOMEGA::RENDER::PASSES::SaurayTraceClass::Render()
 			lastSceneId = curSceneId;
 			rewriteDescriptoSets = true;
 			tracingResources.clear();
-			tracingResources.emplace_back(RESOURCE_RT_ACCEL_STRUCT, RT_RAYGEN, 0, 0, rtSceneRef);
+			tracingResources.emplace_back(RESOURCE_RT_ACCEL_STRUCT, RT_RAYGEN | RT_RCHIT | RT_MISS, 0, 0, rtSceneRef);
 			tracingResources.emplace_back(RESOURCE_IMAGE_STORE, RT_RAYGEN, 0, 1, testOutput, -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
 			tracingResources.emplace_back(RESOURCE_SAMPLER, RT_RAYGEN, 0, 2, *blueNoise);
-			tracingResources.emplace_back(RESOURCE_SSBO, RT_ANYHIT, 0, 3, *GroupedRenderSubmission::SceneData->instancePropertiesBuffer);
-			tracingResources.emplace_back(RESOURCE_SSBO, RT_RAYGEN, 0, 4, frustaBuf);
-			tracingResources.emplace_back(RESOURCE_SSBO, RT_ANYHIT, 0, 5, visibilityMatrixBuf);
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_RCHIT | RT_ANYHIT, 0, 3, *GroupedRenderSubmission::SceneData->instancePropertiesBuffer);
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_RAYGEN | RT_RCHIT | RT_MISS, 0, 4, frustaBuf);
+			tracingResources.emplace_back(RESOURCE_SSBO, RT_RAYGEN | RT_ANYHIT, 0, 5, visibilityMatrixBuf);
 			tracingResources.emplace_back(RESOURCE_UBO, RT_RAYGEN | RT_ANYHIT, 0, 6, timeBuf);
 			tracingResources.emplace_back(RESOURCE_SSBO, RT_RAYGEN, 0, 7, limitsBuf);
+			tracingResources.emplace_back(RESOURCE_UBO, RT_RCHIT, 0, 8, sunDirBuf);
 		}
 		tracelet.Submit(resSide, resSide, 1, tracingResources, rewriteDescriptoSets, rtShaderResourceSet);
 		visibilityMatrixBuf.DownloadSubData(0, playerVisMatrix.data(), (unsigned int)playerVisMatrix.size() * sizeof(playerVisData));
@@ -5708,7 +5715,7 @@ void HIGHOMEGA::RENDER::PASSES::SpatialDenoiseClass::Create(TriClass & PostProce
 	submissionH.SetShader("default", shaderH);
 	submissionV.SetShader("default", shaderV);
 }
- 
+
 void HIGHOMEGA::RENDER::PASSES::SpatialDenoiseClass::Render()
 {
 	pathTraceRef->PathTraceParams.timeTurnBlurDirectionRawLight[3] = GetStateOfAction(CMD_SWITCH_TO_PT_MODE) ? 1.0f : 0.0f;
@@ -6460,7 +6467,7 @@ void HIGHOMEGA::RENDER::PASSES::MainMenuClass::Render(bool postInit, const std::
 		}
 	}
 
-	if ((overButton(vec2(0.172f, screenResItemButtonY), vec2(0.025f)) || overButton(vec2(0.658f, screenResItemButtonY), vec2(0.025f))) && clickDone )
+	if ((overButton(vec2(0.172f, screenResItemButtonY), vec2(0.025f)) || overButton(vec2(0.658f, screenResItemButtonY), vec2(0.025f))) && clickDone)
 	{
 		if (overButton(vec2(0.172f, screenResItemButtonY), vec2(0.025f))) fullResSelection--;
 		else if (overButton(vec2(0.658f, screenResItemButtonY), vec2(0.025f))) fullResSelection++;

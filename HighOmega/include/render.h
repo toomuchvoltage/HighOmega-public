@@ -1066,7 +1066,7 @@ namespace HIGHOMEGA
 				{
 					unsigned int frameCountMaxPlayersSqrtSideResTemporalHistoryAmount[4];
 				} timeInfo;
-				BufferClass frustaBuf, limitsBuf, visibilityMatrixBuf, timeBuf;
+				BufferClass frustaBuf, limitsBuf, visibilityMatrixBuf, timeBuf, sunDirBuf;
 				unsigned int playerResSide;
 				unsigned int maxPlayers;
 				unsigned int maxPlayerSqrt;
@@ -1091,6 +1091,11 @@ namespace HIGHOMEGA
 					float corners[24];
 				};
 				std::vector<playerLimit> playerLimits;
+				struct
+				{
+					float dir[3];
+				} sun;
+				bool sunDirChanged = false;
 
 				std::vector<playerVisData> playerVisMatrix;
 				ImageClass testOutput;

@@ -25,17 +25,42 @@
 
 #version 460
 #extension GL_EXT_ray_tracing : require
+#extension GL_EXT_scalar_block_layout : require
+
+layout (binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
 
 layout(location = 0) rayPayloadInEXT struct {
 	/*
-		1 bit: 	 intersected player
-		31 bits: originating player
+		2 bits:  hitType
+		1 bit:   secondary ray flag
+		29 bits: originating player Id
 	*/
-	uint isectPlayerOrigPlayerId;
+	uint hitTypeSecFlagOrigPlayerId;
 } rayLoad;
+
+struct PlayerFrustum
+{
+	vec4 eyeGeomRad;
+	vec4 eye2Whr;
+	vec4 lookUpLook2Up2;
+	vec4 geomCentYScale;
+	uint maskEnabledReserved;
+};
+
+layout (scalar, binding = 4) buffer playersInfoSSBO
+{
+	PlayerFrustum frusta[];
+} playersInfo;
 
 void main()
 {
 	if (gl_IncomingRayFlagsEXT == gl_RayFlagsCullNoOpaqueEXT)
-		rayLoad.isectPlayerOrigPlayerId = floatBitsToUint (1000000.0);
+	{
+		uint curPlayerId = bitfieldExtract(rayLoad.hitTypeSecFlagOrigPlayerId, 0, 29);
+		uint cullMask = bitfieldExtract(playersInfo.frusta[curPlayerId].maskEnabledReserved, 24, 8);
+		uint rayFlags = gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullOpaqueEXT;
+		float tmin = 0.1;
+		float tmax = 1000000.0;
+		traceRayEXT(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , gl_WorldRayOriginEXT, tmin, gl_WorldRayDirectionEXT, tmax, 0 );
+	}
 }
