@@ -1,0 +1,287 @@
+#version 460
+#extension GL_NV_ray_tracing : require
+
+#define M_PI 3.1415926535
+#define VOXEL_DIM_SIZE voxelizedInfo.mapMinVoxelSize.w
+
+layout (binding = 0, set = 0) uniform accelerationStructureNV topLevelAS;
+layout (binding = 1) uniform sampler2D materialAttach;
+layout (binding = 2) uniform sampler2D worldPosAttach;
+layout (binding = 3) uniform sampler2D normalAttach;
+layout (binding = 4) uniform sampler2D tangentAttach;
+layout (binding = 5) uniform samplerCube skyBox;
+
+layout (binding = 6) uniform SkyShadowMapMVPUBO
+{
+    mat4 projectionViewMatrix;
+    vec4 eye;
+} SkyShadowMapMVP;
+
+layout (binding = 7) uniform RayleighMieUBO
+{
+	vec4 lightDir;
+	vec4 sunDirAndExp;
+	vec4 invW4InnerRad;
+
+	float innerCloudRad;
+	float outerRad;
+	float scaleDepth;
+	float scaleOverScaleDepth;
+	
+	float scatteringCoeff;
+	float extinctionCoeff;
+	float ambientCoeff;
+	float stepSizeEvalLightDir;
+
+	float stepSizeToSky;
+	float numStepsToSky;
+	float stepSizeToSun;
+	float numStepsToSun;
+	
+	vec4 addSkyColorAndNightAmount;
+	vec4 skyObjectLightAndAngle;
+	vec4 horizonColor;
+	vec4 approxGroundColor;
+} rayleighMieInfo;
+
+layout (binding = 8, r32ui) uniform readonly uimage2D shadowDistance;
+layout (binding = 9, rgba8) uniform readonly image2D shadowColor;
+
+layout (binding = 10) uniform sampler3D radiosityMapPX;
+layout (binding = 11) uniform sampler3D radiosityMapNX;
+layout (binding = 12) uniform sampler3D radiosityMapPY;
+layout (binding = 13) uniform sampler3D radiosityMapNY;
+layout (binding = 14) uniform sampler3D radiosityMapPZ;
+layout (binding = 15) uniform sampler3D radiosityMapNZ;
+
+layout (binding = 16) uniform FrameMVPUBO
+{
+    mat4 projectionViewMatrix;
+    vec4 eye;
+} frameMVP;
+
+layout (binding = 17) uniform VoxelizedInfoUBO
+{
+	vec4 mapMinVoxelSize;
+	vec4 mapMaxWriteOffset;
+	vec4 invMapDims;
+	vec4 gridSize;
+} voxelizedInfo;
+
+layout (binding = 19, rgba16f) uniform writeonly image2D glossTraceOutput;
+
+vec3 getUVW (vec3 worldPos)
+{
+	vec3 posUVW = (worldPos - voxelizedInfo.mapMinVoxelSize.xyz) * voxelizedInfo.invMapDims.xyz;
+	if ( posUVW != clamp (posUVW, vec3 (0.0), vec3 (0.999999)) ) return vec3 (2.0);
+	return posUVW;
+}
+
+layout(location = 0) rayPayloadNV struct {
+	float emissivity;
+	vec3 albedo;
+	vec3 pos;
+	mat3 tanSpace;
+} hitValues;
+
+vec2 getScreenSampleCoord (vec3 ptWorld)
+{
+    vec4 ptInfo = SkyShadowMapMVP.projectionViewMatrix * vec4 (ptWorld,1.0);
+    ptInfo.xy = ((ptInfo.xy/ptInfo.w)+vec2 (1.0))*0.5;
+    return ptInfo.xy;
+}
+
+vec3 toVec3(vec2 inpVec)
+{
+	float phi = inpVec.x * (2.0 * M_PI);
+	float theta = inpVec.y * M_PI;
+	float sinTheta = sin(theta);
+	return vec3 (cos(phi) * sinTheta, cos(theta), sin(phi) * sinTheta);
+}
+
+vec3 getSkyValue (vec3 dirToSample)
+{
+	dirToSample.z = -dirToSample.z;
+	return texture(skyBox,dirToSample).xyz;
+}
+
+float luminance(vec3 rgb)
+{
+    return dot(rgb, vec3(0.2125, 0.7154, 0.0721));
+}
+
+vec3 getSkyDirectLight ()
+{
+	return rayleighMieInfo.skyObjectLightAndAngle.xyz * max (luminance (getSkyValue (rayleighMieInfo.lightDir.xyz) * 0.1) * sqrt (max (rayleighMieInfo.sunDirAndExp.y, 0.0)), 1.0);
+}
+
+vec3 getSunContrib (vec3 pos, vec3 norm)
+{
+	float sunDotProd = max (dot (norm, rayleighMieInfo.lightDir.xyz), 0.0);
+	float shadowBias = (1.0 - sunDotProd) * 1.0 + 0.5;
+	float distToSkyLum = length (SkyShadowMapMVP.eye.xyz - pos) - shadowBias;
+	ivec2 texeLoc = ivec2 (clamp (getScreenSampleCoord (pos), vec2 (0.0), vec2 (0.999999)) * vec2 (imageSize(shadowDistance).xy));
+	uint distanceFetch = imageLoad (shadowDistance, texeLoc).x;
+	float shadowDist = sqrt (float (distanceFetch) * 0.1);
+	float sunVis = max (sign (shadowDist - distToSkyLum), 0.0) * sunDotProd;
+	if ( sunVis > 0.0 )
+	{
+		vec3 retVal = getSkyDirectLight () * sunVis;
+		vec3 stainedColorFetch = imageLoad (shadowColor, texeLoc).rgb;
+		if ( stainedColorFetch != vec3 (0.0) ) retVal *= stainedColorFetch;
+		return retVal;
+	}
+	return vec3 (0.0);
+}
+
+vec2 unpackEmissivityRefractiveIndexDielectric (float inpEmissivityRefractiveIndexDielectricPacked, out bool isDielectric)
+{
+	float ourEmissivityRefractiveIndexDielectricPacked = inpEmissivityRefractiveIndexDielectricPacked;
+	if ( ourEmissivityRefractiveIndexDielectricPacked < 0.0 )
+	{
+		ourEmissivityRefractiveIndexDielectricPacked = -ourEmissivityRefractiveIndexDielectricPacked;
+		isDielectric = true;
+	}
+	else
+	{
+		isDielectric = false;
+	}
+	float emissivity = fract (ourEmissivityRefractiveIndexDielectricPacked)* 255.0;
+	float refractiveIndex = floor (ourEmissivityRefractiveIndexDielectricPacked) / 1000.0;
+	return vec2 (emissivity,refractiveIndex);
+}
+
+vec3 getDiffuseRadiance(vec3 pos, mat3 tangentSpace)
+{
+	vec4 fetch1, fetch2, fetch3, fetch4, fetch5, fetch6;
+	fetch1 = fetch2 = fetch3 = fetch4 = fetch5 = fetch6 = vec4(0.0);
+	for (int i = 0; i != 5; i++)
+	{
+		vec3 rayOriginUVW;
+		switch (i)
+		{
+			case 0:
+			 rayOriginUVW = getUVW (pos);
+			 break;
+			case 1:
+			 rayOriginUVW = getUVW (pos - tangentSpace[0] * VOXEL_DIM_SIZE);
+			 break;
+			case 2:
+			 rayOriginUVW = getUVW (pos + tangentSpace[0] * VOXEL_DIM_SIZE);
+			 break;
+			case 3:
+			 rayOriginUVW = getUVW (pos - tangentSpace[1] * VOXEL_DIM_SIZE);
+			 break;
+			default:
+			 rayOriginUVW = getUVW (pos + tangentSpace[1] * VOXEL_DIM_SIZE);
+			 break;
+		}
+		vec4 neighborFetch1 = texture (radiosityMapPX, rayOriginUVW);
+		if ( neighborFetch1.a > 0.0 ) fetch1 += vec4 (neighborFetch1.rgb / neighborFetch1.a, 1.0);
+		vec4 neighborFetch2 = texture (radiosityMapNX, rayOriginUVW);
+		if ( neighborFetch2.a > 0.0 ) fetch2 += vec4 (neighborFetch2.rgb / neighborFetch2.a, 1.0);
+		vec4 neighborFetch3 = texture (radiosityMapPY, rayOriginUVW);
+		if ( neighborFetch3.a > 0.0 ) fetch3 += vec4 (neighborFetch3.rgb / neighborFetch3.a, 1.0);
+		vec4 neighborFetch4 = texture (radiosityMapNY, rayOriginUVW);
+		if ( neighborFetch4.a > 0.0 ) fetch4 += vec4 (neighborFetch4.rgb / neighborFetch4.a, 1.0);
+		vec4 neighborFetch5 = texture (radiosityMapPZ, rayOriginUVW);
+		if ( neighborFetch5.a > 0.0 ) fetch5 += vec4 (neighborFetch5.rgb / neighborFetch5.a, 1.0);
+		vec4 neighborFetch6 = texture (radiosityMapNZ, rayOriginUVW);
+		if ( neighborFetch6.a > 0.0 ) fetch6 += vec4 (neighborFetch6.rgb / neighborFetch6.a, 1.0);
+	}
+	if ( fetch1.a > 0.0 ) fetch1.rgb /= fetch1.a;
+	if ( fetch2.a > 0.0 ) fetch2.rgb /= fetch2.a;
+	if ( fetch3.a > 0.0 ) fetch3.rgb /= fetch3.a;
+	if ( fetch4.a > 0.0 ) fetch4.rgb /= fetch4.a;
+	if ( fetch5.a > 0.0 ) fetch5.rgb /= fetch5.a;
+	if ( fetch6.a > 0.0 ) fetch6.rgb /= fetch6.a;
+	float factor1 = max (tangentSpace[2].x, 0.0);
+	float factor2 = max (-tangentSpace[2].x, 0.0);
+	float factor3 = max (tangentSpace[2].y, 0.0);
+	float factor4 = max (-tangentSpace[2].y, 0.0);
+	float factor5 = max (tangentSpace[2].z, 0.0);
+	float factor6 = max (-tangentSpace[2].z, 0.0);
+	vec3 contrib1 = factor1 * fetch1.rgb;
+	vec3 contrib2 = factor2 * fetch2.rgb;
+	vec3 contrib3 = factor3 * fetch3.rgb;
+	vec3 contrib4 = factor4 * fetch4.rgb;
+	vec3 contrib5 = factor5 * fetch5.rgb;
+	vec3 contrib6 = factor6 * fetch6.rgb;
+	vec3 totalContrib = (contrib1 + contrib2 + contrib3 + contrib4 + contrib5 + contrib6) / (factor1 + factor2 + factor3 + factor4 + factor5 + factor6);
+	return totalContrib;
+}
+
+
+void main()
+{
+	vec2 inUV = (vec2 (gl_LaunchIDNV.xy) + vec2 (0.5)) / vec2(gl_LaunchSizeNV.xy);
+	ivec2 texelLoc = ivec2 (vec2 (textureSize(materialAttach, 0)) * inUV);
+	ivec2 storeCoord = ivec2 (vec2(imageSize(glossTraceOutput)) * inUV);
+
+	vec4 fetchedWorldPosAndMaterialHint = texelFetch(worldPosAttach, texelLoc, 0);
+	if (fetchedWorldPosAndMaterialHint == vec4 (0.0))
+	{
+		imageStore (glossTraceOutput, storeCoord, vec4 (0.0, 0.0, 0.0, -1.0));
+		return ;
+	}
+	vec4 materialFetch = texelFetch(materialAttach, texelLoc, 0);
+	bool isDielectric;
+	vec2 emissivityRefractiveIndex = unpackEmissivityRefractiveIndexDielectric (materialFetch.w, isDielectric);
+
+	if ( emissivityRefractiveIndex.x > 0.0 )
+	{
+		imageStore (glossTraceOutput, storeCoord, vec4 (0.0, 0.0, 0.0, -1.0));
+		return ;
+	}
+	
+	vec3 rayOrigin = fetchedWorldPosAndMaterialHint.xyz;
+	vec3 rayDir = normalize (fetchedWorldPosAndMaterialHint.xyz - frameMVP.eye.xyz);
+	
+	vec4 fragmentRoughnessSpecularity = unpackUnorm4x8(floatBitsToUint (materialFetch.z));
+	
+	vec4 normalFetch = texelFetch(normalAttach, texelLoc, 0);
+	vec4 tangentSpaceFetch = texelFetch(tangentAttach, texelLoc, 0);
+
+	mat3 tangentSpace;
+	tangentSpace[2] = toVec3 (normalFetch.xy);
+	vec3 fragmentGeomNorm = toVec3 (normalFetch.zw);
+	tangentSpace[0] = toVec3 (tangentSpaceFetch.xy);
+	tangentSpace[1] = toVec3 (tangentSpaceFetch.zw);
+
+	tangentSpace[2] = -sign (dot (rayDir, tangentSpace[2])) * tangentSpace[2];
+	fragmentGeomNorm = -sign (dot (rayDir, fragmentGeomNorm)) * fragmentGeomNorm;
+
+	rayDir = reflect (rayDir, tangentSpace[2]);
+
+	vec4 traceContrib = vec4 (0.0, 0.0, 0.0, -1.0);
+	if ( fragmentRoughnessSpecularity.b > 0.0 )
+	{
+		float kernelSize = max(fragmentRoughnessSpecularity.r, fragmentRoughnessSpecularity.g);
+
+		uint rayFlags = 0;
+		uint cullMask = 0xff;
+		float tmin = 0.1;
+		float tmax = 1000000.0;
+
+		traceNV(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , rayOrigin, tmin, rayDir, tmax, 0 );
+
+		if ( hitValues.pos != vec3 (0.0) )
+		{
+			vec3 toHit = hitValues.pos - rayOrigin;
+			traceContrib.a = kernelSize * min (dot (toHit, toHit) * 0.0004, 1.0);
+			if ( hitValues.emissivity > 0.0 )
+			{
+				traceContrib.rgb = hitValues.emissivity * hitValues.albedo;
+			}
+			else
+			{
+				traceContrib.rgb = (getDiffuseRadiance (hitValues.pos, hitValues.tanSpace) + getSunContrib (hitValues.pos, hitValues.tanSpace[2])) * hitValues.albedo;
+			}
+		}
+		else
+		{
+			traceContrib = vec4 (getSkyValue (rayDir), kernelSize);
+		}
+	}
+	imageStore (glossTraceOutput, storeCoord, traceContrib);
+}

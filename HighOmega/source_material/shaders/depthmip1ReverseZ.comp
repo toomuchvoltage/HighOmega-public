@@ -1,0 +1,54 @@
+/*
+	Copyright (c) 2026 TooMuchVoltage Software Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in all
+	copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	SOFTWARE.
+*/
+
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+#extension GL_EXT_scalar_block_layout : require
+
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (binding = 0) uniform sampler2D Input_HiZ;
+layout (binding = 1, r32f) writeonly uniform image2D Output_HiZ;
+layout (scalar, binding = 2) uniform mipParamsUBO
+{
+	uvec2 blockSize;
+} mipParams;
+
+void main()
+{
+	ivec2 inputSize = textureSize (Input_HiZ, 0);
+	ivec2 baseIndex = ivec2 (gl_GlobalInvocationID.xy * mipParams.blockSize);
+	if ( baseIndex.x >= inputSize.x || baseIndex.y >= inputSize.y ) return ;
+
+	float minDepth = 1.0;
+	for (int i = 0; i != mipParams.blockSize.x; i++)
+		for (int j = 0; j != mipParams.blockSize.y; j++)
+		{
+			ivec2 baseFetchLoc = baseIndex + ivec2(i, j);
+			if ( baseFetchLoc.x >= inputSize.x || baseFetchLoc.y >= inputSize.y ) continue;
+			minDepth = min (minDepth, texelFetch (Input_HiZ, baseFetchLoc, 0).x);
+		}
+
+	imageStore (Output_HiZ, ivec2 (gl_GlobalInvocationID.xy), vec4 (minDepth));
+}

@@ -1,0 +1,192 @@
+/*
+	Copyright (c) 2026 TooMuchVoltage Software Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in all
+	copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	SOFTWARE.
+*/
+
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_scalar_block_layout : require
+
+layout (local_size_x = 8, local_size_y = 4, local_size_z = 1) in;
+
+struct ParticleItemWide
+{
+	vec3 pos;
+	vec3 velocity;
+	vec3 xAxis;
+	vec3 yAxis;
+	vec4 alphaHealthFadeRateScaleRate;
+	float scale;
+	float deathRate;
+	bool sizeXAxisToVel;
+	float prevDeltaT;
+	float angSpeed;
+};
+
+#define ReadSourceParticle(o,j,k) {o.pos = particles[j].item[k].pos;\
+								   o.velocity = fromZSignXY (particles[j].item[k].velocityDir) * unpackHalf2x16(particles[j].item[k].scaleLinSpeed).y;\
+								   o.xAxis = fromZSignXY (particles[j].item[k].xAxis);\
+								   o.yAxis = fromZSignXY (particles[j].item[k].yAxis);\
+								   o.alphaHealthFadeRateScaleRate = vec4(float(uint(particles[j].item[k].alpha))/255.0, float(uint(particles[j].item[k].health))/255.0, float(uint(particles[j].item[k].fadeRate))/255.0, unpackHalf2x16(particles[j].item[k].scaleRateFlagsPrevDeltaT).x);\
+								   o.scale = unpackHalf2x16 (particles[j].item[k].scaleLinSpeed).x;\
+								   o.deathRate = float(uint(particles[j].item[k].deathRate))/255.0;\
+								   o.sizeXAxisToVel = ((particles[j].item[k].scaleRateFlagsPrevDeltaT & 0x0000FF00u) >> 8) == 1u;\
+								   o.prevDeltaT = float(particles[j].item[k].scaleRateFlagsPrevDeltaT & 0x000000FFu)/255.0;\
+								   o.angSpeed = particles[j].item[k].angSpeed;}
+
+struct VertexFromVertBufWide
+{
+	vec4 eCol;
+	vec2 uv;
+	uint Norm;
+};
+
+#define ReadVertex(v,i,j) {uint triCount = giantVB.dat[i];\
+						   uint offsetToVertices = 2 + (triCount * 3); offsetToVertices += i + ((24 - ((offsetToVertices * 4) % 24 /* sizeof(RasterVertex) */ )) / 4);\
+						   v.eCol.x = uintBitsToFloat(giantVB.dat[offsetToVertices + (j) * 6]);\
+						   v.eCol.y = uintBitsToFloat(giantVB.dat[offsetToVertices + (j) * 6 + 1]);\
+						   v.eCol.z = uintBitsToFloat(giantVB.dat[offsetToVertices + (j) * 6 + 2]);\
+						   v.eCol.w = uintBitsToFloat(giantVB.dat[offsetToVertices + (j) * 6 + 3]);\
+						   v.uv = unpackHalf2x16(giantVB.dat[offsetToVertices + (j) * 6 + 4]);\
+						   v.Norm = giantVB.dat[offsetToVertices + (j) * 6 + 5];}
+
+#define StoreVertex(v,i,j) {uint triCount = giantVB.dat[i];\
+							uint offsetToVertices = 2 + (triCount * 3); offsetToVertices += i + ((24 - ((offsetToVertices * 4) % 24 /* sizeof(RasterVertex) */ )) / 4);\
+							giantVB.dat[offsetToVertices + (j) * 6] = floatBitsToUint(v.eCol.x);\
+							giantVB.dat[offsetToVertices + (j) * 6 + 1] = floatBitsToUint(v.eCol.y);\
+							giantVB.dat[offsetToVertices + (j) * 6 + 2] = floatBitsToUint(v.eCol.z);\
+							giantVB.dat[offsetToVertices + (j) * 6 + 3] = floatBitsToUint(v.eCol.w);\
+							giantVB.dat[offsetToVertices + (j) * 6 + 4] = packHalf2x16(v.uv);\
+							giantVB.dat[offsetToVertices + (j) * 6 + 5] = v.Norm;}
+
+layout(scalar, binding = 0) buffer GiantVertBuffer
+{
+	uint dat[];
+} giantVB;
+
+struct ParticleItem
+{
+	vec3 pos;
+	uint velocityDir;
+	uint xAxis;
+	uint yAxis;
+	uint8_t alpha;
+	uint8_t health;
+	uint8_t fadeRate;
+	uint8_t deathRate;
+	uint scaleLinSpeed;
+	uint scaleRateFlagsPrevDeltaT;
+	float angSpeed;
+};
+
+layout (scalar, set = 1, binding = 0) buffer ParticlesSSBO
+{
+	ParticleItem item[];
+} particles[];
+
+struct TransformParams
+{
+	uint vertCount;
+	uint instanceCount;
+	uint geomInstCount;
+	uint srcIdxVertOffset;
+	uint dstIdxVertOffset;
+};
+
+layout (scalar, set = 2, binding = 0) buffer TransformParamsSSBO
+{
+	TransformParams geomInstParams[];
+} transformParams[];
+
+float packVertexVelocity(vec3 inpVel, float inpPackedColor)
+{
+	float inpVelLen = length (inpVel);
+	vec3 inpVelNorm = inpVel;
+	if (inpVelLen != 0.0) inpVelNorm /= inpVelLen;
+	uint zSignVelX = uint(clamp (inpVelNorm.x + 1.0, 0.0, 2.0) * 63.5);
+	if (inpVelNorm.z < 0.0) zSignVelX |= 0x80;
+	uint velY = uint (clamp(inpVelNorm.y + 1.0, 0.0, 2.0) * 127.5);
+	uint velLen = clamp (uint(inpVelLen * 10.0), 0, 255);
+	
+	uint inpPackedColorUint = floatBitsToUint(inpPackedColor);
+	inpPackedColorUint &= 0x000000FFu;
+	inpPackedColorUint |= (zSignVelX << 8);
+	inpPackedColorUint |= (velY << 16);
+	inpPackedColorUint |= (velLen << 24);
+	return uintBitsToFloat(inpPackedColorUint);
+}
+
+uint toZSignXY(vec3 inpVec)
+{
+	uint retVal = ((uint((inpVec.x + 1.0) * 16383.0) << 16) | uint((inpVec.y + 1.0) * 32767.0));
+	if (inpVec.z < 0.0) retVal |= 0x80000000u;
+	return retVal;
+}
+
+vec3 fromZSignXY(uint inpPack)
+{
+	vec3 retVal;
+	retVal.x = (float((inpPack & 0x7FFF0000u) >> 16) / 32766.0) * 2.0 - 1.0;
+	retVal.y = (float(inpPack & 0x0000FFFFu) / 65534.0) * 2.0 - 1.0;
+	vec2 xyVec = vec2(retVal.x, retVal.y);
+	retVal.z = sqrt(clamp (1.0 - dot(xyVec, xyVec), 0.0, 1.0));
+	if ((inpPack & 0x80000000u) != 0) retVal.z = -retVal.z;
+	return retVal;
+}
+
+mat4 DirectionTransform(mat4 transform)
+{
+	mat4 retVal = mat4(1.0);
+	retVal[0].xyz = cross(transform[1].xyz, transform[2].xyz);
+	retVal[1].xyz = cross(transform[2].xyz, transform[0].xyz);
+	retVal[2].xyz = cross(transform[0].xyz, transform[1].xyz);
+	return retVal;
+}
+
+void main()
+{
+	for (uint i = 0; i != transformParams[nonuniformEXT(gl_GlobalInvocationID.z)].geomInstParams[0].geomInstCount; i++)
+	{
+		if ( any(greaterThanEqual(gl_GlobalInvocationID.xy, uvec2(transformParams[nonuniformEXT(gl_GlobalInvocationID.z)].geomInstParams[i].vertCount, transformParams[nonuniformEXT(gl_GlobalInvocationID.z)].geomInstParams[i].instanceCount))) ) continue;
+
+		ParticleItemWide curParticle;
+		ReadSourceParticle (curParticle, nonuniformEXT(gl_GlobalInvocationID.z), gl_GlobalInvocationID.y)
+
+		mat4 trans = mat4(1.0);
+		trans[0] = vec4 (curParticle.xAxis * curParticle.scale * (curParticle.sizeXAxisToVel ? (length(curParticle.velocity) * curParticle.prevDeltaT) : 1.0), 0.0);
+		trans[1] = vec4 (curParticle.yAxis * curParticle.scale, 0.0);
+		trans[2] = vec4 (cross(curParticle.xAxis, curParticle.yAxis) * curParticle.scale, 0.0);
+		trans[3] = vec4 (curParticle.pos, 1.0);
+
+		VertexFromVertBufWide sourceVert;
+		ReadVertex (sourceVert, transformParams[nonuniformEXT(gl_GlobalInvocationID.z)].geomInstParams[i].srcIdxVertOffset, gl_GlobalInvocationID.x)
+
+		sourceVert.eCol.xyz = (trans * vec4 (sourceVert.eCol.xyz, 1.0)).xyz;
+		sourceVert.eCol.w = packVertexVelocity (curParticle.velocity * curParticle.prevDeltaT, packUnorm4x8 (vec4 (curParticle.alphaHealthFadeRateScaleRate.x, 0.0, 1.0, 0.0)));
+		sourceVert.Norm = toZSignXY (normalize ((DirectionTransform(trans) * vec4 (fromZSignXY(sourceVert.Norm), 1.0)).xyz));
+
+		StoreVertex (sourceVert, transformParams[nonuniformEXT(gl_GlobalInvocationID.z)].geomInstParams[i].dstIdxVertOffset, transformParams[nonuniformEXT(gl_GlobalInvocationID.z)].geomInstParams[i].vertCount * gl_GlobalInvocationID.y + gl_GlobalInvocationID.x)
+	}
+}

@@ -1,0 +1,29 @@
+#version 460
+#extension GL_NV_ray_tracing : require
+
+layout (binding = 0, set = 0) uniform accelerationStructureNV topLevelAS;
+layout (binding = 1, rgba8) uniform image2D pathTraceOutput;
+
+layout(location = 0) rayPayloadNV struct {
+	float hitT;
+} hitValues;
+
+void main()
+{
+	vec2 inUV = (vec2 (gl_LaunchIDNV.xy) + vec2 (0.5)) / vec2(gl_LaunchSizeNV.xy);
+	ivec2 storeCoord = ivec2 (vec2(imageSize(pathTraceOutput).xy) * inUV);
+	inUV = inUV * 2.0 - vec2 (1.0);
+	vec3 traceDir = normalize (vec3 (-inUV.x, -inUV.y, 1.0));
+
+    uint rayFlags = 0;
+    uint cullMask = 0xff;
+    float tmin = 0.1;
+    float tmax = 1000000.0;
+
+	traceNV(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , vec3 (0.0), tmin, traceDir, tmax, 0 );
+
+	if (hitValues.hitT != -1.0)
+		imageStore (pathTraceOutput, storeCoord, vec4 (length(traceDir * hitValues.hitT) * 0.005));
+	else
+		imageStore (pathTraceOutput, storeCoord, vec4 (1.0, 0.0, 0.0, 1.0));
+}

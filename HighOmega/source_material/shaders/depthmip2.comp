@@ -1,0 +1,114 @@
+/*
+	Copyright (c) 2026 TooMuchVoltage Software Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in all
+	copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	SOFTWARE.
+*/
+
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (binding = 0, r32f) uniform readonly image2D LOD64_HiZ;
+layout (binding = 1, r32f) coherent uniform writeonly image2D LOD32_HiZ;
+layout (binding = 2, r32f) coherent uniform writeonly image2D LOD16_HiZ;
+layout (binding = 3, r32f) coherent uniform writeonly image2D LOD8_HiZ;
+layout (binding = 4, r32f) coherent uniform writeonly image2D LOD4_HiZ;
+layout (binding = 5, r32f) coherent uniform writeonly image2D LOD2_HiZ;
+layout (binding = 6, r32f) coherent uniform writeonly image2D LOD1_HiZ;
+
+shared float cachedValues64[64][64];
+shared float cachedValues32[32][32];
+shared float cachedValues16[16][16];
+shared float cachedValues8[8][8];
+shared float cachedValues4[4][4];
+shared float cachedValues2[2][2];
+
+void main()
+{
+	for (int i = 0; i != 8; i++)
+		for (int j = 0; j != 8; j++)
+		{
+			ivec2 cacheIndex = ivec2 (gl_GlobalInvocationID.xy * 8) + ivec2 (i, j);
+			cachedValues64[cacheIndex.x][cacheIndex.y] = imageLoad (LOD64_HiZ, cacheIndex).x;
+		}
+
+	memoryBarrier();
+	barrier();
+
+	for (int i = 0; i != 4; i++)
+		for (int j = 0; j != 4; j++)
+		{
+			ivec2 readIndex = ivec2 (gl_GlobalInvocationID.xy * 8) + ivec2 (i, j) * 2;
+			ivec2 writeIndex = readIndex / 2;
+			cachedValues32[writeIndex.x][writeIndex.y] = max (max (cachedValues64[readIndex.x][readIndex.y], cachedValues64[readIndex.x + 1][readIndex.y]), 
+															  max (cachedValues64[readIndex.x][readIndex.y + 1], cachedValues64[readIndex.x + 1][readIndex.y + 1]));
+			imageStore (LOD32_HiZ, writeIndex.xy, vec4(cachedValues32[writeIndex.x][writeIndex.y]));
+		}
+
+	memoryBarrier();
+	barrier();
+
+	for (int i = 0; i != 2; i++)
+		for (int j = 0; j != 2; j++)
+		{
+			ivec2 readIndex = ivec2 (gl_GlobalInvocationID.xy * 4) + ivec2 (i, j) * 2;
+			ivec2 writeIndex = readIndex / 2;
+			cachedValues16[writeIndex.x][writeIndex.y] = max (max (cachedValues32[readIndex.x][readIndex.y], cachedValues32[readIndex.x + 1][readIndex.y]), 
+															  max (cachedValues32[readIndex.x][readIndex.y + 1], cachedValues32[readIndex.x + 1][readIndex.y + 1]));
+			imageStore (LOD16_HiZ, writeIndex.xy, vec4(cachedValues16[writeIndex.x][writeIndex.y]));
+		}
+
+	memoryBarrier();
+	barrier();
+
+	ivec2 readIndex = ivec2 (gl_GlobalInvocationID.xy * 2);
+	cachedValues8[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = max (max (cachedValues16[readIndex.x][readIndex.y], cachedValues16[readIndex.x + 1][readIndex.y]), 
+																		   max (cachedValues16[readIndex.x][readIndex.y + 1], cachedValues16[readIndex.x + 1][readIndex.y + 1]));
+	imageStore (LOD8_HiZ, ivec2 (gl_GlobalInvocationID.xy), vec4(cachedValues8[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
+
+	if ( gl_GlobalInvocationID.x >= 4 || gl_GlobalInvocationID.y >= 4 ) return;
+
+	memoryBarrier();
+	barrier();
+
+	readIndex = ivec2 (gl_GlobalInvocationID.xy * 2);
+	cachedValues4[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = max (max (cachedValues8[readIndex.x][readIndex.y], cachedValues8[readIndex.x + 1][readIndex.y]), 
+																		   max (cachedValues8[readIndex.x][readIndex.y + 1], cachedValues8[readIndex.x + 1][readIndex.y + 1]));
+	imageStore (LOD4_HiZ, ivec2 (gl_GlobalInvocationID.xy), vec4(cachedValues4[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
+
+	if ( gl_GlobalInvocationID.x >= 2 || gl_GlobalInvocationID.y >= 2 ) return;
+
+	memoryBarrier();
+	barrier();
+
+	readIndex = ivec2 (gl_GlobalInvocationID.xy * 2);
+	cachedValues2[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = max (max (cachedValues4[readIndex.x][readIndex.y], cachedValues4[readIndex.x + 1][readIndex.y]), 
+																		   max (cachedValues4[readIndex.x][readIndex.y + 1], cachedValues4[readIndex.x + 1][readIndex.y + 1]));
+	imageStore (LOD2_HiZ, ivec2 (gl_GlobalInvocationID.xy), vec4(cachedValues2[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
+
+	if ( gl_GlobalInvocationID.xy != uvec2(0) ) return;
+
+	memoryBarrier();
+	barrier();
+
+	imageStore (LOD1_HiZ, ivec2(0), vec4(max (max (cachedValues2[0][0], cachedValues2[1][0]), max (cachedValues2[0][1], cachedValues2[1][1]))));
+}

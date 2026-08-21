@@ -1,0 +1,86 @@
+/*
+	Copyright (c) 2026 TooMuchVoltage Software Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in all
+	copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	SOFTWARE.
+*/
+
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+#extension GL_EXT_scalar_block_layout : require
+
+layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+layout(scalar, binding = 0) uniform JFAParamsUBO
+{
+	uvec2 offsetStage;
+} JFAParams;
+
+layout (binding = 1, rgba32ui) uniform uimage3D jfaImage;
+layout (binding = 2, rgba8) uniform image3D voxelizedImage;
+
+void main()
+{
+	ivec3 gridSize = imageSize (voxelizedImage);
+	if ( any(greaterThanEqual (gl_GlobalInvocationID , uvec3 (gridSize))) ) return;
+	switch (JFAParams.offsetStage.y)
+	{
+		case 0:
+		{
+			vec4 imgFetch = imageLoad (voxelizedImage, ivec3(gl_GlobalInvocationID));
+			uvec4 storeInfo = uvec4 (0, 0, 0, 1);
+			if ( imgFetch.a != 0.0 )
+				storeInfo = uvec4(gl_GlobalInvocationID, 0);
+			imageStore (jfaImage, ivec3(gl_GlobalInvocationID), storeInfo);
+			break;
+		}
+		case 1:
+		{
+			float minLen = 100000000.0;
+			ivec3 minCoord = ivec3(0);
+			bool foundMin = false;
+			
+			for (int i = -1; i != 2; i++)
+				for (int j = -1; j != 2; j++)
+					for (int k = -1; k != 2; k++)
+					{
+						ivec3 samTexel = ivec3 (gl_GlobalInvocationID) + ivec3 (i, j, k) * int(JFAParams.offsetStage.x);
+						if ( any (lessThan (samTexel, ivec3(0))) || any(greaterThanEqual(samTexel, gridSize)) ) continue;
+						uvec4 fetchTexel = imageLoad (jfaImage, samTexel);
+						float lenCompute = length(ivec3(fetchTexel.xyz) - ivec3 (gl_GlobalInvocationID));
+						if ( fetchTexel == uvec4 (0, 0, 0, 1) || lenCompute >= minLen ) continue;
+						minLen = lenCompute;
+						minCoord = ivec3 (fetchTexel.xyz);
+						foundMin = true;
+					}
+			if ( foundMin ) imageStore (jfaImage, ivec3(gl_GlobalInvocationID), uvec4 (minCoord, 0));
+			break;
+		}
+		case 2:
+		{
+			ivec3 fetchClosestCoord = ivec3(imageLoad (jfaImage, ivec3(gl_GlobalInvocationID)).xyz);
+			uint minDist = min (uint(length(fetchClosestCoord.xyz - ivec3(gl_GlobalInvocationID))), 255);
+			vec4 matFetch = imageLoad (voxelizedImage, ivec3(gl_GlobalInvocationID));
+			matFetch.a = float (minDist) / 255.0;
+			imageStore (voxelizedImage, ivec3(gl_GlobalInvocationID), matFetch);
+			break;
+		}
+	}
+}

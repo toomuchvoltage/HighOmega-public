@@ -1,0 +1,85 @@
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_scalar_block_layout : require
+
+#define NUM_THREADS 32
+
+layout (local_size_x = NUM_THREADS, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform buildParamsUBO
+{
+	vec4 mapMinTriCount;
+	vec4 mapMax;
+} buildParams;
+
+struct BVHTriangle
+{
+	vec4 e1Instance;
+	vec4 e2Primitive;
+	vec4 e3Morton;
+};
+
+struct InstanceProps
+{
+    vec3 attribs1;
+    vec4 attribs2;
+	uint16_t splatOffset;
+	uint16_t diffOffset;
+	uint16_t nrmOffset;
+	uint16_t rghOffset;
+	uint16_t hgtOffset;
+	uint16_t spcOffset;
+};
+
+struct BVHInternalNode
+{
+	vec4 aabbMinChildA;
+	vec4 aabbMaxChildB;
+};
+
+struct BVHTriangleCompressed
+{
+	uvec4 e1InstComp1e2InstComp2e3InstComp3OpaqueFlagPrimID;
+};
+
+layout (binding = 1) buffer srcBuf
+{
+	BVHTriangle tris[];
+} src;
+
+layout (scalar, binding = 2) buffer InstanceInfoSSBO
+{
+    InstanceProps props[];
+} instanceInfo;
+
+layout (binding = 3) buffer dstBuf
+{
+	BVHTriangleCompressed compTris[];
+} dst;
+
+void main()
+{
+	uint triCount = floatBitsToUint (buildParams.mapMinTriCount.a);
+	if ( gl_GlobalInvocationID.x >= triCount ) return ;
+
+	vec3 triMin, triMax;
+	uint instanceId = floatBitsToUint (src.tris[gl_GlobalInvocationID.x].e1Instance.a);
+	uint primId = floatBitsToUint (src.tris[gl_GlobalInvocationID.x].e2Primitive.a);
+	triMin = min (min (src.tris[gl_GlobalInvocationID.x].e1Instance.xyz, src.tris[gl_GlobalInvocationID.x].e2Primitive.xyz), src.tris[gl_GlobalInvocationID.x].e3Morton.xyz);
+	triMax = max (max (src.tris[gl_GlobalInvocationID.x].e1Instance.xyz, src.tris[gl_GlobalInvocationID.x].e2Primitive.xyz), src.tris[gl_GlobalInvocationID.x].e3Morton.xyz);
+	vec3 fracMul = 1.0 / (triMax - triMin);
+	uvec3 e1Frac = uvec3 (clamp ((src.tris[gl_GlobalInvocationID.x].e1Instance.xyz - triMin) * fracMul, vec3 (0.0), vec3 (1.0)) * 255.0);
+	uvec3 e2Frac = uvec3 (clamp ((src.tris[gl_GlobalInvocationID.x].e2Primitive.xyz - triMin) * fracMul, vec3 (0.0), vec3 (1.0)) * 255.0);
+	uvec3 e3Frac = uvec3 (clamp ((src.tris[gl_GlobalInvocationID.x].e3Morton.xyz - triMin) * fracMul, vec3 (0.0), vec3 (1.0)) * 255.0);
+	uint e1Comp = (e1Frac.x << 24) | (e1Frac.y << 16) | (e1Frac.z << 8) | ((instanceId & 0x00FF0000u) >> 16);
+	uint e2Comp = (e2Frac.x << 24) | (e2Frac.y << 16) | (e2Frac.z << 8) | ((instanceId & 0x0000FF00u) >> 8);
+	uint e3Comp = (e3Frac.x << 24) | (e3Frac.y << 16) | (e3Frac.z << 8) |  (instanceId & 0x000000FFu);
+	uint e4Comp = primId & 0x7FFFFFFFu;
+	if ( (floatBitsToUint (instanceInfo.props[instanceId].attribs1.x) & 0x00000080u) != 0u )
+		e4Comp |= 0x80000000u;
+	dst.compTris[gl_GlobalInvocationID.x].e1InstComp1e2InstComp2e3InstComp3OpaqueFlagPrimID = uvec4 (e1Comp, e2Comp, e3Comp, e4Comp);
+}

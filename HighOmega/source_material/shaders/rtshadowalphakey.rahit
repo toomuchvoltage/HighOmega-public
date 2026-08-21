@@ -1,0 +1,126 @@
+/*
+	Copyright (c) 2026 TooMuchVoltage Software Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in all
+	copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	SOFTWARE.
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+hitAttributeEXT vec3 hitBaryCoord;
+
+#define diffuseSampler sceneTextures[nonuniformEXT(instanceInfo.props[gl_InstanceCustomIndexEXT].diffOffset)]
+#define curInstInfo instanceInfo.props[nonuniformEXT(gl_InstanceCustomIndexEXT)]
+
+struct TriangleFromVertBufWide
+{
+	vec4 e1Col1;
+	vec2 uv1;
+	uint Norm1;
+	vec4 e2Col2;
+	vec2 uv2;
+	uint Norm2;
+	vec4 e3Col3;
+	vec2 uv3;
+	uint Norm3;
+};
+
+#define ReadTri(o,i,j) {uint triCount = giantVB.dat[i];\
+						uint offsetToIndices = i + 2, offsetToVertices = 2 + (triCount * 3); offsetToVertices += i + ((24 - ((offsetToVertices * 4) % 24 /* sizeof(RasterVertex) */ )) / 4);\
+						uint e1Offset = offsetToVertices + giantVB.dat[offsetToIndices + j * 3] * 6;\
+						uint e2Offset = offsetToVertices + giantVB.dat[offsetToIndices + j * 3 + 1] * 6;\
+						uint e3Offset = offsetToVertices + giantVB.dat[offsetToIndices + j * 3 + 2] * 6;\
+						o.e1Col1 = vec4 (uintBitsToFloat(giantVB.dat[e1Offset]), uintBitsToFloat(giantVB.dat[e1Offset + 1]), uintBitsToFloat(giantVB.dat[e1Offset + 2]), uintBitsToFloat(giantVB.dat[e1Offset + 3]));\
+						o.uv1 = unpackHalf2x16(giantVB.dat[e1Offset + 4]);\
+						o.Norm1 = giantVB.dat[e1Offset + 5];\
+						o.e2Col2 = vec4 (uintBitsToFloat(giantVB.dat[e2Offset]), uintBitsToFloat(giantVB.dat[e2Offset + 1]), uintBitsToFloat(giantVB.dat[e2Offset + 2]), uintBitsToFloat(giantVB.dat[e2Offset + 3]));\
+						o.uv2 = unpackHalf2x16(giantVB.dat[e2Offset + 4]);\
+						o.Norm2 = giantVB.dat[e2Offset + 5];\
+						o.e3Col3 = vec4 (uintBitsToFloat(giantVB.dat[e3Offset]), uintBitsToFloat(giantVB.dat[e3Offset + 1]), uintBitsToFloat(giantVB.dat[e3Offset + 2]), uintBitsToFloat(giantVB.dat[e3Offset + 3]));\
+						o.uv3 = unpackHalf2x16(giantVB.dat[e3Offset + 4]);\
+						o.Norm3 = giantVB.dat[e3Offset + 5];}
+
+layout(set = 1, binding = 0) uniform sampler2DArray sceneTextures[];
+
+struct InstanceProps
+{
+	vec3 geomMin;
+	vec3 geomMax;
+    vec3 attribs1;
+    vec4 attribs2;
+	uint16_t splatOffset;
+	uint16_t diffOffset;
+	uint16_t nrmOffset;
+	uint16_t rghOffset;
+	uint16_t hgtOffset;
+	uint16_t spcOffset;
+	uint idxVertOffset;
+	uint transformOffset;
+	uint prevTransformOffset;
+};
+
+layout (scalar, set = 2, binding = 0) buffer InstanceInfoSSBO
+{
+	InstanceProps props[];
+} instanceInfo;
+
+layout(scalar, set = 2, binding = 1) buffer GiantVertBuffer
+{
+	uint dat[];
+} giantVB;
+
+vec4 sampleDiffuse (vec3 inUVTerrain)
+{
+	return texture (diffuseSampler, vec3 (inUVTerrain.xy, 0.0));
+}
+
+bool getIsDecal (uint packedFlags)
+{
+	return (packedFlags & 0x00000200) != 0;
+}
+
+bool isAlphaBlending (uint packedFlags)
+{
+	return (packedFlags & 0x00002000) != 0;
+}
+
+void main()
+{
+	TriangleFromVertBufWide hitTri;
+	ReadTri (hitTri, curInstInfo.idxVertOffset, gl_PrimitiveID)
+	vec3 barycoords = vec3(1.0 - hitBaryCoord.x - hitBaryCoord.y, hitBaryCoord.x, hitBaryCoord.y);
+
+	vec3 uvTerrain = vec3 (hitTri.uv1 * barycoords.x + hitTri.uv2 * barycoords.y + hitTri.uv3 * barycoords.z, 0.0);
+
+	float alphaVal = sampleDiffuse (uvTerrain).a;
+	float particleStrength = unpackUnorm4x8(floatBitsToUint(hitTri.e1Col1.w)).x * barycoords.x + unpackUnorm4x8(floatBitsToUint(hitTri.e2Col2.w)).x * barycoords.y + unpackUnorm4x8(floatBitsToUint(hitTri.e3Col3.w)).x * barycoords.z;
+	if (curInstInfo.attribs1.y > 0.0 && particleStrength > 0.0)
+		alphaVal *= curInstInfo.attribs1.y * particleStrength;
+	if (isAlphaBlending(floatBitsToUint(curInstInfo.attribs1.x)) && particleStrength > 0.0)
+		alphaVal *= particleStrength;
+
+	if ( alphaVal < 0.1 || getIsDecal(floatBitsToUint(curInstInfo.attribs1.x)) )
+	{
+		ignoreIntersectionEXT;
+	}
+}

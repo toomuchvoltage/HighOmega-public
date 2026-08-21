@@ -1,0 +1,128 @@
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_scalar_block_layout : require
+
+#define NUM_THREADS 32
+#define PER_THREAD_TRI_COUNT 1000
+
+layout (local_size_x = NUM_THREADS, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform buildParamsUBO
+{
+	vec4 mapMinTriCount;
+	vec4 mapMax;
+} buildParams;
+
+layout(binding = 1) buffer compMortonParamsBuf
+{
+	uvec4 offsetLenx2[];
+} compMortonParams;
+
+struct BVHTriangle
+{
+	vec4 e1Instance;
+	vec4 e2Primitive;
+	vec4 e3Morton;
+};
+
+layout(binding = 2) buffer destBuf
+{
+	BVHTriangle tris[];
+} dest;
+
+struct TriangleFromVertBufWide
+{
+	vec4 e1Col1;
+	vec2 uv1;
+	uint Norm1;
+	uint res1;
+	vec4 e2Col2;
+	vec2 uv2;
+	uint Norm2;
+	uint res2;
+	vec4 e3Col3;
+	vec2 uv3;
+	uint Norm3;
+	uint res3;
+};
+
+#define ReadSourceTri(o,i,j) {o.e1Col1 = sourceGeom[i].tri[j].e1Col1;\
+							  o.e2Col2 = sourceGeom[i].tri[j].e2Col2;\
+							  o.e3Col3 = sourceGeom[i].tri[j].e3Col3;\
+							  o.uv1 = vec2 (sourceGeom[i].tri[j].uv1.x, sourceGeom[i].tri[j].uv1.y);\
+							  o.Norm1 = sourceGeom[i].tri[j].Norm1;\
+							  o.uv2 = vec2 (sourceGeom[i].tri[j].uv2.x, sourceGeom[i].tri[j].uv2.y);\
+							  o.Norm2 = sourceGeom[i].tri[j].Norm2;\
+							  o.uv3 = vec2 (sourceGeom[i].tri[j].uv3.x, sourceGeom[i].tri[j].uv3.y);\
+							  o.Norm3 = sourceGeom[i].tri[j].Norm3;}
+
+struct TriangleFromVertBuf
+{
+	vec4 e1Col1;
+	f16vec2 uv1;
+	uint Norm1;
+	vec4 e2Col2;
+	f16vec2 uv2;
+	uint Norm2;
+	vec4 e3Col3;
+	f16vec2 uv3;
+	uint Norm3;
+};
+
+layout(scalar, set = 1, binding = 0) buffer SourceTriBuffer
+{
+	TriangleFromVertBuf tri[];
+} sourceGeom[];
+
+uint expandBits(uint v)
+{
+	v = (v * 0x00010001u) & 0xFF0000FFu;
+	v = (v * 0x00000101u) & 0x0F00F00Fu;
+	v = (v * 0x00000011u) & 0xC30C30C3u;
+	v = (v * 0x00000005u) & 0x49249249u;
+	return v;
+}
+
+uint morton3D(vec3 inp)
+{
+	inp = clamp (inp * vec3 (1024.0), vec3 (0.0), vec3 (1023.0));
+	uint xx = expandBits(uint(inp.x));
+	uint yy = expandBits(uint(inp.y));
+	uint zz = expandBits(uint(inp.z));
+	return xx * 4 + yy * 2 + zz;
+}
+
+void main()
+{
+	uint triCount = compMortonParams.offsetLenx2[gl_WorkGroupID.y / 2][(gl_WorkGroupID.y % 2) * 2 + 1];
+	uint curTriBaseID = gl_WorkGroupID.x * NUM_THREADS * PER_THREAD_TRI_COUNT;
+	if ( curTriBaseID >= triCount ) return ;
+	uint triOffset = compMortonParams.offsetLenx2[gl_WorkGroupID.y / 2][(gl_WorkGroupID.y % 2) * 2];
+	
+	vec3 invMapSize = 1.0 / (buildParams.mapMax.xyz - buildParams.mapMinTriCount.xyz);
+
+	BVHTriangle bvhTri;
+	for (int i = 0; i != PER_THREAD_TRI_COUNT; i++)
+	{
+		uint curTriID = curTriBaseID + (gl_LocalInvocationID.x * PER_THREAD_TRI_COUNT) + i;
+		if ( curTriID >= triCount ) return;
+		TriangleFromVertBufWide curTri;
+		ReadSourceTri (curTri, nonuniformEXT(gl_WorkGroupID.y), curTriID);
+		bvhTri.e1Instance = vec4 (curTri.e1Col1.xyz, uintBitsToFloat(gl_WorkGroupID.y));
+		bvhTri.e2Primitive = vec4 (curTri.e2Col2.xyz, uintBitsToFloat(curTriID));
+		bvhTri.e3Morton.xyz = curTri.e3Col3.xyz;
+		
+		vec3 triMin = min (min(bvhTri.e1Instance.xyz, bvhTri.e2Primitive.xyz), bvhTri.e3Morton.xyz);
+		vec3 triMax = max (max(bvhTri.e1Instance.xyz, bvhTri.e2Primitive.xyz), bvhTri.e3Morton.xyz);
+
+		vec3 triCentroid = (triMin + triMax) * 0.5;
+		vec3 aabbFrac = (triCentroid - buildParams.mapMinTriCount.xyz) * invMapSize;
+		
+		bvhTri.e3Morton.a = uintBitsToFloat (morton3D (aabbFrac));
+		dest.tris[triOffset + curTriID] = bvhTri;
+	}
+}

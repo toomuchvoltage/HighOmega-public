@@ -1,0 +1,89 @@
+#version 460
+#extension GL_NV_ray_tracing : require
+
+#define M_PI 3.1415926535
+#define M_INV_PI 0.31830988618
+
+layout (binding = 0, set = 0) uniform accelerationStructureNV topLevelAS;
+layout (binding = 1) uniform sampler2D materialAttach;
+layout (binding = 2) uniform sampler2D worldPosAttach;
+layout (binding = 3) uniform sampler2D normalAttach;
+layout (binding = 4) uniform sampler2D backDropAttach;
+
+layout (binding = 6) uniform RayleighMieUBO
+{
+	vec4 lightDir;
+	vec4 sunDirAndExp;
+	vec4 invW4InnerRad;
+
+	float innerCloudRad;
+	float outerRad;
+	float scaleDepth;
+	float scaleOverScaleDepth;
+	
+	float scatteringCoeff;
+	float extinctionCoeff;
+	float ambientCoeff;
+	float stepSizeEvalLightDir;
+
+	float stepSizeToSky;
+	float numStepsToSky;
+	float stepSizeToSun;
+	float numStepsToSun;
+	
+	vec4 addSkyColorAndNightAmount;
+	vec4 skyObjectLightAndAngle;
+	vec4 horizonColor;
+	vec4 approxGroundColor;
+} rayleighMieInfo;
+
+layout (binding = 7) uniform FrameMVPUBO
+{
+    mat4 projectionViewMatrix;
+    vec4 eye;
+} frameMVP;
+
+layout (binding = 8, rgba8) uniform image2D pathTraceOutput;
+
+layout(location = 0) rayPayloadNV struct {
+	vec3 color;
+} hitValues;
+
+vec3 toVec3(vec2 inpVec)
+{
+	float phi = inpVec.x * (2.0 * M_PI);
+	float theta = inpVec.y * M_PI;
+	vec3 onPlane = vec3 (cos(phi), 0.0, 0.0) + vec3 (0.0, 0.0, sin(phi));
+	return onPlane*sin(theta) + vec3(0.0, cos(theta), 0.0);
+}
+
+void main()
+{
+	vec2 inUV = (vec2 (gl_LaunchIDNV.xy) + vec2 (0.5)) / vec2(gl_LaunchSizeNV.xy);
+	ivec2 texelLoc = ivec2 (vec2 (textureSize(materialAttach, 0).xy) * inUV);
+	ivec2 storeCoord = ivec2 (vec2(imageSize(pathTraceOutput).xy) * inUV);
+
+	vec4 fetchedWorldPosAndMaterialHint = texelFetch(worldPosAttach, texelLoc, 0);
+	if (fetchedWorldPosAndMaterialHint == vec4 (0.0))
+	{
+		//imageStore (pathTraceOutput, storeCoord, texture(backDropAttach, inUV));
+		imageStore (pathTraceOutput, storeCoord, vec4 (0.478, 0.576, 0.694, 1.0));
+		return ;
+	}
+	vec4 materialFetch = texelFetch(materialAttach, texelLoc, 0);
+	vec3 rayOrigin = fetchedWorldPosAndMaterialHint.xyz;
+	vec3 rayDir = normalize (fetchedWorldPosAndMaterialHint.xyz - frameMVP.eye.xyz);
+	
+    vec4 fragmentAlbedo = unpackUnorm4x8(floatBitsToUint (materialFetch.x));
+	vec3 normalFetch = toVec3 (texelFetch(normalAttach, texelLoc, 0).xy);
+	rayDir = reflect (rayDir, normalFetch);
+	
+    uint rayFlags = 0;
+    uint cullMask = 0xff;
+    float tmin = 0.1;
+    float tmax = 1000000.0;
+
+	traceNV(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , rayOrigin, tmin, rayDir, tmax, 0 );
+
+	imageStore (pathTraceOutput, storeCoord, vec4 (fragmentAlbedo.rgb * hitValues.color.rgb, 1.0));
+}

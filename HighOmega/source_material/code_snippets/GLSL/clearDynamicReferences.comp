@@ -1,0 +1,28 @@
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+
+layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+layout (binding = 0, r32ui) uniform uimage3D gridScene;
+
+layout (binding = 1) uniform GridClearInfoUBO
+{
+	uvec4 offsetMaxTrisPerCellOffsetShiftedReserved;
+} gridClearInfo;
+
+void main()
+{
+	ivec3 activeThreadIds = imageSize(gridScene);
+	activeThreadIds.x /= int(gridClearInfo.offsetMaxTrisPerCellOffsetShiftedReserved.y);
+	if ( any(greaterThanEqual(gl_GlobalInvocationID, activeThreadIds)) ) return ;
+
+	for (int i = 0; i != int(gridClearInfo.offsetMaxTrisPerCellOffsetShiftedReserved.y); i++)
+	{
+		ivec3 curFetchLoc = ivec3 (gl_GlobalInvocationID.x * int(gridClearInfo.offsetMaxTrisPerCellOffsetShiftedReserved.y) + i, gl_GlobalInvocationID.yz);
+		uint instTriId = imageLoad (gridScene, curFetchLoc).x;
+		if ( instTriId == 0xFFFFFFFF ) return;
+		else if ( instTriId >= gridClearInfo.offsetMaxTrisPerCellOffsetShiftedReserved.x ) imageAtomicExchange (gridScene, curFetchLoc, 0xFFFFFFFF);
+	}
+}

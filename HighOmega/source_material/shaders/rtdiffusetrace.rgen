@@ -1,0 +1,388 @@
+/*
+	Copyright (c) 2026 TooMuchVoltage Software Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in all
+	copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	SOFTWARE.
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_control_flow_attributes : enable
+
+#define M_PI 3.1415926535
+#define HIGHOMEGA_MAXIMUM_IRRADIANCE_CACHE_CASCADES 6
+#define HIGHOMEGA_IRRADIANCE_CACHE_SIDE_SIZE 32.0
+
+layout (binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
+layout (binding = 1, rgba32f) uniform readonly image2D materialAttach;
+layout (binding = 2, rgba32f) uniform readonly image2D worldPosAttach;
+layout (binding = 3, rgba32f) uniform readonly image2D normAttach;
+
+layout (scalar, binding = 4) uniform FrameMVPUBO
+{
+	mat4 projectionViewMatrix;
+	vec4 lookEyeX;
+	vec4 upEyeY;
+	vec4 sideEyeZ;
+	vec2 whrTanHalfFovY;
+} frameMVP;
+
+layout (binding = 5) uniform PathTraceParamsUBO
+{
+	vec4 radiosityMapCenterMotionFactor;
+	vec4 timeTurnBlurDirectionRawLight;
+} pathTraceParams;
+
+layout (binding = 6, rgba16f) uniform image3D radiosityMap[HIGHOMEGA_MAXIMUM_IRRADIANCE_CACHE_CASCADES * 6];
+layout (binding = 7) uniform samplerCube skyBox;
+layout (binding = 8) uniform sampler2D shadowDistanceNear;
+layout (binding = 9) uniform sampler2D shadowColorNear;
+
+layout (scalar, binding = 10) uniform SkyShadowMapMVPNearUBO
+{
+	mat4 projectionViewMatrix;
+	vec4 lookEyeX;
+	vec4 upEyeY;
+	vec4 sideEyeZ;
+	vec2 whrTanHalfFovY;
+} SkyShadowMapMVPNear;
+
+layout (binding = 11) uniform sampler2D shadowDistanceFar;
+layout (binding = 12) uniform sampler2D shadowColorFar;
+
+layout (scalar, binding = 13) uniform SkyShadowMapMVPFarUBO
+{
+	mat4 projectionViewMatrix;
+	vec4 lookEyeX;
+	vec4 upEyeY;
+	vec4 sideEyeZ;
+	vec2 whrTanHalfFovY;
+} SkyShadowMapMVPFar;
+
+layout (binding = 14) uniform RayleighMieUBO
+{
+	vec4 lightDir;
+	vec4 sunDirAndExp;
+	vec4 invW4InnerRad;
+
+	float innerCloudRad;
+	float outerRad;
+	float scaleDepth;
+	float scaleOverScaleDepth;
+	
+	float scatteringCoeff;
+	float extinctionCoeff;
+	float ambientCoeff;
+	float stepSizeEvalLightDir;
+
+	float stepSizeToSky;
+	float numStepsToSky;
+	float stepSizeToSun;
+	float numStepsToSun;
+	
+	vec4 addSkyColorAndNightAmount;
+	vec4 skyObjectLightAndAngle;
+	vec4 horizonColor;
+	vec4 approxGroundColor;
+} rayleighMieInfo;
+
+layout (constant_id = 0) const float nearMinBias = 0.00001;
+layout (constant_id = 1) const float nearMaxBias = 0.00002;
+layout (constant_id = 2) const float farMinBias = 0.001;
+layout (constant_id = 3) const float farMaxBias = 0.002;
+
+layout(location = 0) rayPayloadEXT struct TriangleHit {
+	uint albedoEmissivity;
+	vec3 particleEmissivity;
+	vec4 particleBlending;
+	uint specularSpecularity;
+	mat3 tanSpace;
+	vec3 hitPos;
+	uint decalAlbedo;
+	uint decalSpecularSpecularity;
+	mat3 decalTanSpace;
+	vec3 decalHitPos;
+	bool didHit;
+} hitValues;
+
+vec3 fromZSignXY(uint inpPack)
+{
+	vec3 retVal;
+	retVal.x = (float((inpPack & 0x7FFF0000u) >> 16) / 32766.0) * 2.0 - 1.0;
+	retVal.y = (float(inpPack & 0x0000FFFFu) / 65534.0) * 2.0 - 1.0;
+	vec2 xyVec = vec2(retVal.x, retVal.y);
+	retVal.z = sqrt(clamp (1.0 - dot(xyVec, xyVec), 0.0, 1.0));
+	if ((inpPack & 0x80000000u) != 0) retVal.z = -retVal.z;
+	return retVal;
+}
+
+vec3 getRand (vec3 forPos)
+{
+    float rx = fract(sin(dot(forPos, vec3(-1.9898,  -4.233, 5.1938))) * 40338.5453);
+    float ry = fract(cos(dot(forPos, vec3( 1.1948,  7.963, -4.0687))) * 52718.5453);
+    float rz = fract(sin(dot(forPos, vec3(-3.1948,  2.963,  5.0687))) * 63058.5453);
+    
+    return vec3 (rx, ry, rz);
+}
+
+void unpackEmissivityRefractiveIndexDielectric (float packedVal, out float emissivity, out float refractiveIndex, out bool diElectric)
+{
+	vec4 unpackedVal = unpackUnorm4x8 (floatBitsToUint (packedVal));
+	emissivity = unpackedVal.x * 25.5;
+	refractiveIndex = unpackedVal.y * 4.0;
+	diElectric = unpackedVal.z == 1.0 ? true : false;
+}
+
+const float cascadeEdges[HIGHOMEGA_MAXIMUM_IRRADIANCE_CACHE_CASCADES] = {4.0, 8.0, 16.0, 32.0, 64.0, 128.0};
+
+ivec4 getUVWLoc (vec3 pos)
+{
+	[[unroll]]
+	for (int i = 0; i != HIGHOMEGA_MAXIMUM_IRRADIANCE_CACHE_CASCADES; i++) {
+		vec3 diffVec = pos - (pathTraceParams.radiosityMapCenterMotionFactor.xyz - vec3 (HIGHOMEGA_IRRADIANCE_CACHE_SIDE_SIZE * 0.5 * cascadeEdges[i]));
+		vec3 fracAmt = diffVec / (HIGHOMEGA_IRRADIANCE_CACHE_SIDE_SIZE * cascadeEdges[i]);
+		vec3 clampFracAmt = clamp(fracAmt, vec3 (0.0), vec3 (1.0));
+		if ( clampFracAmt != fracAmt && i < HIGHOMEGA_MAXIMUM_IRRADIANCE_CACHE_CASCADES - 1 ) continue;
+		return ivec4 (fracAmt * HIGHOMEGA_IRRADIANCE_CACHE_SIDE_SIZE, i);
+	}
+}
+
+void addDiffuseRadiance (vec3 irrad, vec3 pos, vec3 dir)
+{
+	if (any(isnan(irrad)) || any(isinf(irrad))) return ;
+	ivec4 uvwLoc = getUVWLoc (pos);
+	uint cascadeLevel = uvwLoc.w * 6;
+	vec3 xIrrad = dir.x * irrad;
+	vec3 yIrrad = dir.y * irrad;
+	vec3 zIrrad = dir.z * irrad;
+	vec4 lightPX = imageLoad (radiosityMap[nonuniformEXT (cascadeLevel + 0)], uvwLoc.xyz);
+	vec4 lightNX = imageLoad (radiosityMap[nonuniformEXT (cascadeLevel + 1)], uvwLoc.xyz);
+	vec4 lightPY = imageLoad (radiosityMap[nonuniformEXT (cascadeLevel + 2)], uvwLoc.xyz);
+	vec4 lightNY = imageLoad (radiosityMap[nonuniformEXT (cascadeLevel + 3)], uvwLoc.xyz);
+	vec4 lightPZ = imageLoad (radiosityMap[nonuniformEXT (cascadeLevel + 4)], uvwLoc.xyz);
+	vec4 lightNZ = imageLoad (radiosityMap[nonuniformEXT (cascadeLevel + 5)], uvwLoc.xyz);
+	if ( dir.x > 0.0 ) lightPX += vec4 (xIrrad, 0.5);
+	if ( dir.x < 0.0 ) lightNX += vec4 (-xIrrad, 0.5);
+	if ( dir.y > 0.0 ) lightPY += vec4 (yIrrad, 0.5);
+	if ( dir.y < 0.0 ) lightNY += vec4 (-yIrrad, 0.5);
+	if ( dir.z > 0.0 ) lightPZ += vec4 (zIrrad, 0.5);
+	if ( dir.z < 0.0 ) lightNZ += vec4 (-zIrrad, 0.5);
+	imageStore (radiosityMap[nonuniformEXT (cascadeLevel + 0)], uvwLoc.xyz, lightPX);
+	imageStore (radiosityMap[nonuniformEXT (cascadeLevel + 1)], uvwLoc.xyz, lightNX);
+	imageStore (radiosityMap[nonuniformEXT (cascadeLevel + 2)], uvwLoc.xyz, lightPY);
+	imageStore (radiosityMap[nonuniformEXT (cascadeLevel + 3)], uvwLoc.xyz, lightNY);
+	imageStore (radiosityMap[nonuniformEXT (cascadeLevel + 4)], uvwLoc.xyz, lightPZ);
+	imageStore (radiosityMap[nonuniformEXT (cascadeLevel + 5)], uvwLoc.xyz, lightNZ);
+}
+
+vec3 getSkyValue (vec3 dirToSample)
+{
+	dirToSample.z = -dirToSample.z;
+	return texture(skyBox,dirToSample).xyz;
+}
+
+vec3 getSkyDirectLight ()
+{
+	vec3 toSun = normalize (-SkyShadowMapMVPFar.lookEyeX.xyz);
+	vec3 toSunUp = normalize (cross (toSun, toSun + vec3 (0.1)));
+	vec3 toSunSide = cross (toSun, toSunUp);
+	vec3 retVal = vec3 (0.0);
+	for (int i = -1; i != 2; i++)
+		for (int j = -1; j != 2; j++)
+			retVal += getSkyValue (-SkyShadowMapMVPFar.lookEyeX.xyz + toSunUp * float(i) * 0.1 + toSunSide * float(j) * 0.1);
+	return retVal * 0.111111111 * rayleighMieInfo.skyObjectLightAndAngle.xyz;
+}
+
+vec3 sampleShadow (vec3 samplePos, vec3 sampleNorm)
+{
+	vec4 shadowUVFetch = SkyShadowMapMVPNear.projectionViewMatrix * vec4 (samplePos - vec3 (SkyShadowMapMVPNear.lookEyeX.a, SkyShadowMapMVPNear.upEyeY.a, SkyShadowMapMVPNear.sideEyeZ.a),1.0);
+	shadowUVFetch.xyz /= shadowUVFetch.w;
+	shadowUVFetch.xy = (shadowUVFetch.xy+vec2 (1.0))*0.5;
+	vec3 shadowResult = vec3 (1.0);
+
+	if ( shadowUVFetch.xy == clamp (shadowUVFetch.xy, vec2 (0.0), vec2 (1.0)) )
+	{
+		ivec2 readShadowLoc = ivec2 (shadowUVFetch.xy * vec2 (textureSize(shadowDistanceNear, 0).xy));
+		float shadowDist = texelFetch (shadowDistanceNear, readShadowLoc, 0).x;
+		shadowResult *= max (sign ((shadowDist + mix (nearMaxBias, nearMinBias, abs(dot (sampleNorm, SkyShadowMapMVPNear.lookEyeX.xyz)))) - shadowUVFetch.z), 0.0);
+		vec4 colorFetch = texture (shadowColorNear, shadowUVFetch.xy);
+		if ( colorFetch.rgb != vec3 (0.0) && max (sign (colorFetch.a - shadowUVFetch.z), 0.0) == 0.0 ) shadowResult *= colorFetch.rgb;
+	}
+	else
+	{
+		shadowUVFetch = SkyShadowMapMVPFar.projectionViewMatrix * vec4 (samplePos - vec3 (SkyShadowMapMVPFar.lookEyeX.a, SkyShadowMapMVPFar.upEyeY.a, SkyShadowMapMVPFar.sideEyeZ.a),1.0);
+		shadowUVFetch.xyz /= shadowUVFetch.w;
+		shadowUVFetch.xy = (shadowUVFetch.xy+vec2 (1.0))*0.5;
+
+		ivec2 readShadowLoc = ivec2 (shadowUVFetch.xy * vec2 (textureSize(shadowDistanceFar, 0).xy));
+		float shadowDist = texelFetch (shadowDistanceFar, readShadowLoc, 0).x;
+		shadowResult *= max (sign ((shadowDist + mix (farMaxBias, farMinBias, abs(dot (sampleNorm, SkyShadowMapMVPNear.lookEyeX.xyz)))) - shadowUVFetch.z), 0.0);
+		vec4 colorFetch = texture (shadowColorFar, shadowUVFetch.xy);
+		if ( colorFetch.rgb != vec3 (0.0) && max (sign (colorFetch.a - shadowUVFetch.z), 0.0) == 0.0 ) shadowResult *= colorFetch.rgb;
+	}
+
+	return shadowResult;
+}
+
+vec3 sampleHemiUniform (vec3 tanVec, vec3 biTan, vec3 norm, vec2 randVal)
+{
+	float r = sqrt(max(1.0 - randVal.x * randVal.x, 0.0));
+	float phi = 2.0 * M_PI * randVal.y;
+	return r * (cos(phi) * tanVec + sin(phi) * biTan) + randVal.x * norm;
+}
+
+void main()
+{
+	vec2 inUV = (vec2 (gl_LaunchIDEXT.xy) + vec2 (0.5)) / vec2(gl_LaunchSizeEXT.xy);
+	ivec2 fetchCoord = ivec2 (inUV * imageSize(materialAttach));
+	vec4 materialFetch = imageLoad(materialAttach, fetchCoord);
+
+	vec4 roughnessFetch = unpackUnorm4x8 (floatBitsToUint (materialFetch.z));
+
+	if ( materialFetch == vec4(0.0) || roughnessFetch.z == 1.0 ) return ;
+
+	float emissivity, refractiveIndex;
+	bool diElectric;
+	unpackEmissivityRefractiveIndexDielectric (materialFetch.w, emissivity, refractiveIndex, diElectric);
+
+	if ( emissivity > 0.0 ) return ;
+
+	vec4 worldPosFetch = imageLoad(worldPosAttach, fetchCoord);
+	vec4 normalFetch = imageLoad(normAttach, fetchCoord);
+	
+	vec3 vertNorm = fromZSignXY (floatBitsToUint (normalFetch.y));
+	vec3 tanVec = fromZSignXY (floatBitsToUint (normalFetch.z));
+	vec3 biTanVec = fromZSignXY (floatBitsToUint (normalFetch.w));
+
+	vec3 faceNorm = normalize (cross (tanVec, biTanVec));
+	if ( dot (faceNorm, vertNorm) < 0.0 ) faceNorm = -faceNorm;
+
+	vec3 eyeLoc = vec3 (frameMVP.lookEyeX.a, frameMVP.upEyeY.a, frameMVP.sideEyeZ.a);
+	vec3 curPos = worldPosFetch.xyz;
+	vec2 randVal = getRand (getRand(curPos + vec3 (mod(pathTraceParams.timeTurnBlurDirectionRawLight.x, 100.0)) * 10.0)).xy;
+	vec3 rayDir = sampleHemiUniform (tanVec, biTanVec, faceNorm, randVal);
+	vec3 ray2Dir;
+
+	TriangleHit hit1Props, hit2Props;
+	vec3 throughput = vec3 (1.0);
+	vec3 directLight = vec3 (0.0);
+	bool lastBounceDiffuse = false;
+
+	uint rayFlags = 0;
+	uint cullMask = 0xff;
+	float tmin = 0.1;
+	float tmax = 1000000.0;
+
+	hitValues.decalAlbedo = 0u;
+	hitValues.particleEmissivity = vec3 (0.0);
+	traceRayEXT(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , curPos, tmin, rayDir, tmax, 0 );
+	
+	hit1Props = hitValues;
+	vec4 hit1AlbedoEmissivity = unpackUnorm4x8 (hit1Props.albedoEmissivity);
+	hit1AlbedoEmissivity.a *= 25.5;
+	vec4 hit2AlbedoEmissivity;
+	vec4 hit1SpecularSpecularity = unpackUnorm4x8 (hit1Props.specularSpecularity);
+	vec4 hit2SpecularSpecularity;
+
+	if ( hit1Props.didHit )
+	{
+		hitValues.particleEmissivity = vec3 (0.0);
+		hitValues.particleBlending = vec4 (0.0);
+		traceRayEXT(topLevelAS, gl_RayFlagsCullOpaqueEXT, cullMask, 0 , 0 , 0 , curPos, 0.0, normalize (hitValues.hitPos - curPos), length (hitValues.hitPos - curPos), 0 );
+		throughput.rgb = mix (throughput.rgb, hitValues.particleBlending.rgb, hitValues.particleBlending.a);
+		directLight += hitValues.particleEmissivity;
+		if ( hit1AlbedoEmissivity.a > 0.0 )
+		{
+			throughput *= hit1AlbedoEmissivity.rgb * hit1AlbedoEmissivity.a;
+			addDiffuseRadiance (throughput + directLight, worldPosFetch.xyz, rayDir);
+		}
+		else
+		{
+			if ( fract (randVal.x + randVal.y) > hit1SpecularSpecularity.a )
+			{
+				randVal = getRand(getRand(hit1Props.hitPos + vec3 (mod(pathTraceParams.timeTurnBlurDirectionRawLight.x, 100.0)) * 10.0)).xy;
+				ray2Dir = sampleHemiUniform (hit1Props.tanSpace[0], hit1Props.tanSpace[1], hit1Props.tanSpace[2], randVal);
+				directLight += sampleShadow (hit1Props.hitPos, hit1Props.tanSpace[2]) * max (dot(hit1Props.tanSpace[2], -SkyShadowMapMVPFar.lookEyeX.xyz), 0.0) * getSkyDirectLight() * hit1AlbedoEmissivity.rgb * throughput;
+				throughput *= 2.0 * hit1AlbedoEmissivity.rgb * max(dot (ray2Dir, hit1Props.tanSpace[2]), 0.0);
+				lastBounceDiffuse = true;
+			}
+			else
+			{
+				ray2Dir = reflect (rayDir, hit1Props.tanSpace[2]);
+				throughput *= hit1SpecularSpecularity.rgb;
+			}
+
+			rayFlags = 0;
+			cullMask = 0xff;
+			tmin = 0.1;
+			tmax = 1000000.0;
+
+			hitValues.decalAlbedo = 0u;
+			hitValues.particleEmissivity = vec3 (0.0);
+			traceRayEXT(topLevelAS, rayFlags, cullMask, 0 , 0 , 0 , hit1Props.hitPos, tmin, ray2Dir, tmax, 0 );
+
+			hit2Props = hitValues;
+			hit2AlbedoEmissivity = unpackUnorm4x8 (hit2Props.albedoEmissivity);
+			hit2AlbedoEmissivity.a *= 25.5;
+			hit2SpecularSpecularity = unpackUnorm4x8 (hit2Props.specularSpecularity);
+
+			if ( hit2Props.didHit )
+			{
+				hitValues.particleEmissivity = vec3 (0.0);
+				hitValues.particleBlending = vec4 (0.0);
+				traceRayEXT(topLevelAS, gl_RayFlagsCullOpaqueEXT, cullMask, 0 , 0 , 0 , hit1Props.hitPos, 0.0, normalize (hitValues.hitPos - hit1Props.hitPos), length (hitValues.hitPos - hit1Props.hitPos), 0 );
+				throughput.rgb = mix (throughput.rgb, hitValues.particleBlending.rgb, hitValues.particleBlending.a);
+				directLight += throughput * hitValues.particleEmissivity;
+				if ( hit2AlbedoEmissivity.a > 0.0 )
+				{
+					throughput *= hit2AlbedoEmissivity.rgb * hit2AlbedoEmissivity.a;
+					addDiffuseRadiance (throughput + directLight, worldPosFetch.xyz, rayDir);
+					if ( lastBounceDiffuse ) addDiffuseRadiance (hit2AlbedoEmissivity.rgb * hit2AlbedoEmissivity.a, hit1Props.hitPos, ray2Dir);
+				}
+				else
+				{
+					if ( fract (randVal.x * randVal.y) > hit2SpecularSpecularity.a )
+						directLight += sampleShadow (hit2Props.hitPos, hit2Props.tanSpace[2]) * max (dot(hit2Props.tanSpace[2], -SkyShadowMapMVPFar.lookEyeX.xyz), 0.0) * getSkyDirectLight() * hit2AlbedoEmissivity.rgb * throughput;
+					throughput = vec3 (0.0);
+					addDiffuseRadiance (throughput + directLight, worldPosFetch.xyz, rayDir);
+					if ( lastBounceDiffuse ) addDiffuseRadiance (vec3 (0.0), hit1Props.hitPos, ray2Dir);
+				}
+			}
+			else
+			{
+				hitValues.particleEmissivity = vec3 (0.0);
+				traceRayEXT(topLevelAS, gl_RayFlagsCullOpaqueEXT, cullMask, 0 , 0 , 0 , hit1Props.hitPos, tmin, ray2Dir, tmax, 0 );
+				directLight += throughput * hitValues.particleEmissivity;
+				vec3 skyValFetch = getSkyValue (ray2Dir);
+				throughput *= skyValFetch;
+				addDiffuseRadiance (throughput + directLight, worldPosFetch.xyz, rayDir);
+				if ( lastBounceDiffuse ) addDiffuseRadiance (skyValFetch + hitValues.particleEmissivity, hit1Props.hitPos, ray2Dir);
+			}
+		}
+	}
+	else
+	{
+		hitValues.particleEmissivity = vec3 (0.0);
+		traceRayEXT(topLevelAS, gl_RayFlagsCullOpaqueEXT, cullMask, 0 , 0 , 0 , curPos, tmin, rayDir, tmax, 0 );
+		directLight += hitValues.particleEmissivity;
+		throughput *= getSkyValue (rayDir);
+		addDiffuseRadiance (throughput + directLight, worldPosFetch.xyz, rayDir);
+	}
+}

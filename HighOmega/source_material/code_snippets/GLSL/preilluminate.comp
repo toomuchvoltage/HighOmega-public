@@ -1,0 +1,237 @@
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+
+#define VOXEL_DIM_SIZE gridInfo.center.w
+#define M_PI 3.1415926535
+
+layout (local_size_x = 8, local_size_y = 8, local_size_y = 8) in;
+layout (binding = 0) uniform sampler3D diffuseSampler;
+layout (binding = 1) uniform sampler3D normalSampler;
+layout (binding = 2) uniform sampler3D emissivityDielectricRefractiveIndexAndRoughness3DSampler;
+layout (binding = 3) uniform sampler3D specular3DSampler;
+layout (binding = 4) uniform sampler3D dfSampler;
+layout (binding = 5) uniform samplerCube skyBox;
+
+layout (binding = 6, rgba16f) uniform image3D preIlluminateImage;
+
+layout (binding = 7) uniform GridInfoUBO
+{
+	vec4 gridMin;
+	vec4 gridMax;
+	vec4 center;
+	vec4 mapMin;
+	vec4 mapMax;
+} gridInfo;
+
+vec3 getUVW (vec3 worldPos)
+{
+	vec3 boxMax = gridInfo.center.xyz + gridInfo.gridMax.xyz;
+	vec3 boxMin = gridInfo.center.xyz + gridInfo.gridMin.xyz;
+	vec3 boxLen = boxMax - boxMin;
+    vec3 boxUVW = (worldPos - boxMin)/boxLen;
+	if ( boxUVW == clamp (boxUVW, vec3(0.0), vec3(1.0)) )
+	{
+		return boxUVW;
+	}
+	return vec3 (2.0);
+}
+
+vec3 toVec3(vec2 inpVec)
+{
+	float phi = inpVec.x * (2.0 * M_PI);
+	float theta = inpVec.y * M_PI;
+	vec3 onPlane = vec3 (cos(phi), 0.0, 0.0) + vec3 (0.0, 0.0, sin(phi));
+	return onPlane*sin(theta) + vec3(0.0, cos(theta), 0.0);
+}
+
+mat3 decodeTanBitan (float encodedTanBiTan, vec3 inpNorm)
+{
+	float encodedVal = round (encodedTanBiTan * 255.0);
+	bool biTanDotBasisYNegative = false;
+	if ( encodedVal >= 128.0 )
+	{
+		encodedVal -= 128.0;
+		biTanDotBasisYNegative = true;
+	}
+	bool tanDotBasisYNegative = false;
+	if ( encodedVal >= 64.0 )
+	{
+		encodedVal -= 64.0;
+		tanDotBasisYNegative = true;
+	}
+	float basisXShadow = clamp (((encodedVal / 63.0) * 2.0) - 1.0, -1.0, 1.0);
+	float basisYShadow = sqrt (1.0 - basisXShadow*basisXShadow);
+	vec3 aBasisX = normalize (cross (inpNorm, inpNorm + vec3 (0.1)));
+	vec3 aBasisY = cross (inpNorm,aBasisX);
+	vec3 tanVector = basisXShadow * aBasisX;
+	if (tanDotBasisYNegative)
+		tanVector -= basisYShadow * aBasisY;
+	else
+		tanVector += basisYShadow * aBasisY;
+	tanVector = normalize (tanVector);
+	vec3 biTanVector = cross (inpNorm, tanVector);
+	if ( dot (biTanVector, aBasisY) > 0.0 && biTanDotBasisYNegative ) biTanVector = -biTanVector;
+	mat3 retVal;
+	retVal[0] = tanVector;
+	retVal[1] = biTanVector;
+	retVal[2] = inpNorm;
+	return retVal;
+}
+
+mat3 getOrthoBasisAndSpec (vec3 uvwLoc, out float specularityOut)
+{
+	vec4 fetchEncodedBasis = texture(normalSampler,uvwLoc);
+	specularityOut = fetchEncodedBasis.a;
+	vec3 decodedNorm = normalize (toVec3 (fetchEncodedBasis.rg));
+	mat3 decodedBasis = decodeTanBitan (fetchEncodedBasis.b, decodedNorm);
+	return decodedBasis;
+}
+
+float getDistance (vec3 uvwLoc)
+{
+	return max (texture(dfSampler,uvwLoc).r * 255.0, 1.0);
+}
+
+vec3 getEmissivityDielectricRefractiveIndexAndRoughness3DImage (vec3 uvwLoc, out bool diElectric, out float IoR)
+{
+	vec4 rawFetch = texture(emissivityDielectricRefractiveIndexAndRoughness3DSampler,uvwLoc);
+	float pureEmissivity = rawFetch.x * 25.5;
+	vec2 fetchedRoughness = rawFetch.zw;
+	
+	float dielectricRefractiveIndex = rawFetch.y * 255.0;
+	if ( dielectricRefractiveIndex >= 128.0 )
+	{
+		diElectric = true;
+		dielectricRefractiveIndex -= 128.0;
+	}
+	else
+		diElectric = false;
+		
+	IoR = dielectricRefractiveIndex * 0.03149606299212598425196850393701;
+
+	return vec3 (pureEmissivity, fetchedRoughness);
+}
+
+float schlicks (float n1, float n2, vec3 norm, vec3 light)
+{
+	float R0 = (n1 - n2)/(n1 + n2);
+	R0 *= R0;
+	float _1_minus_dot = 1.0 - min(abs (dot (norm, light)), 1.0);
+	_1_minus_dot = _1_minus_dot*_1_minus_dot*_1_minus_dot*_1_minus_dot*_1_minus_dot;
+	return R0 + (1 - R0) * _1_minus_dot;
+}
+
+ivec3 getImageLoc (vec3 uvwLoc)
+{
+	vec3 boxMax = gridInfo.center.xyz + gridInfo.gridMax.xyz;
+	vec3 boxMin = gridInfo.center.xyz + gridInfo.gridMin.xyz;
+	vec3 boxLen = boxMax - boxMin;
+	return ivec3 (round((uvwLoc * boxLen) / VOXEL_DIM_SIZE));
+}
+
+vec3 getSkyValue (vec3 dirToSample)
+{
+	dirToSample.z = -dirToSample.z;
+	return texture(skyBox,dirToSample).xyz;
+}
+
+void main()
+{
+	vec3 curPos = gridInfo.mapMin.xyz + vec3 (gl_GlobalInvocationID.xyz) * VOXEL_DIM_SIZE;
+	vec3 uvwLoc = getUVW (curPos);
+	vec3 uvwOrigLoc = uvwLoc;
+	ivec3 iUvwOrigLoc = getImageLoc(uvwOrigLoc);
+	bool diElectric;
+	float voxelSpec;
+	float IoR;
+	vec3 emissivityRoughness = getEmissivityDielectricRefractiveIndexAndRoughness3DImage (uvwLoc, diElectric, IoR);
+	if ( texture(diffuseSampler, uvwLoc).a == 0.0 || emissivityRoughness.x != 0.0 || diElectric ) return ;
+	if ( imageLoad (preIlluminateImage, iUvwOrigLoc) != vec4 (0.0) ) return ;
+
+	mat3 curBasis = getOrthoBasisAndSpec (uvwLoc, voxelSpec);
+	curPos += curBasis[2] * VOXEL_DIM_SIZE * 1.41;
+	vec3 origPos = curPos;
+	
+	vec4 storeLight = vec4 (0.0);
+
+	for (int i = 0;i != 21;i++)
+		for (int j = 1;j != 6;j++)
+		{
+			float phi =  (float(i)/21.0) * M_PI * 2.0;
+			float theta = (float(j)/6.0) * M_PI * 0.5;
+			curPos = origPos;
+			vec3 dirToTrace = (cos(phi) * curBasis[0] + sin(phi) * curBasis[1]) * cos (theta) + curBasis[2] * sin (theta);
+			vec4 glossMod = vec4 (1.0);
+			while (true)
+			{
+				uvwLoc = getUVW (curPos);
+				if ( uvwLoc == vec3 (2.0) )
+				{
+					storeLight += abs (dot (curBasis[2], dirToTrace)) * glossMod * vec4 (getSkyValue (dirToTrace), 1.0) * 0.01 * sin (theta);
+					break;
+				}
+				vec4 diffFetch = texture(diffuseSampler, uvwLoc);
+				if ( diffFetch.a == 1.0 )
+				{
+					emissivityRoughness = getEmissivityDielectricRefractiveIndexAndRoughness3DImage (uvwLoc, diElectric, IoR);
+					mat3 orthoBasis = getOrthoBasisAndSpec (uvwLoc, voxelSpec);
+					vec3 decodedNorm = orthoBasis[2];
+					vec3 moveDir;
+					if ( emissivityRoughness.x > 0.0 )
+					{
+						storeLight += abs (dot (curBasis[2], dirToTrace)) * glossMod * diffFetch * emissivityRoughness.x * 0.01 * sin (theta);
+						break ;
+					}
+					else if ( diElectric )
+					{
+						float hitAngle = dot (decodedNorm, dirToTrace);
+						if ( hitAngle < 0.0 )
+						{
+							if ( schlicks (1.0, IoR, decodedNorm, dirToTrace) > 0.75 )
+							{
+								dirToTrace = reflect (dirToTrace, decodedNorm);
+								moveDir = decodedNorm;
+							}
+							else
+							{
+								dirToTrace = refract (dirToTrace, decodedNorm, 1.0/IoR);
+								moveDir = -decodedNorm;
+							}
+						}
+						else
+						{
+							float nRatio = 1.0/IoR;
+							if ( (nRatio * nRatio) - 1.0 + (hitAngle * hitAngle) < 0.0 )
+							{
+								dirToTrace = reflect (dirToTrace, -decodedNorm);
+								moveDir = -decodedNorm;
+							}
+							else
+							{
+								dirToTrace = refract (dirToTrace, -decodedNorm, IoR);
+								moveDir = decodedNorm;
+							}
+						}
+						glossMod *= texture(specular3DSampler, uvwLoc);
+						curPos += moveDir * VOXEL_DIM_SIZE * 1.41;
+					}
+					else if ( voxelSpec > 0.8 )
+					{
+						dirToTrace = reflect (dirToTrace, decodedNorm);
+						moveDir = decodedNorm;
+						glossMod *= texture(specular3DSampler, uvwLoc);
+						curPos += moveDir * VOXEL_DIM_SIZE * 1.41;
+					}
+					else {
+						storeLight += imageLoad (preIlluminateImage, getImageLoc(uvwLoc)) * glossMod * diffFetch * abs (dot (curBasis[2], dirToTrace)) * 0.01 * sin (theta);
+						break ;
+					}
+				}
+				curPos += dirToTrace * getDistance (uvwLoc) * VOXEL_DIM_SIZE;
+			}
+		}
+
+	imageStore (preIlluminateImage, iUvwOrigLoc, storeLight);
+}

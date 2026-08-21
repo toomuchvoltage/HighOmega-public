@@ -1,0 +1,254 @@
+/*
+	Copyright (c) 2026 TooMuchVoltage Software Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in all
+	copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	SOFTWARE.
+*/
+
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_scalar_block_layout : require
+
+layout (local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+struct ParticleItemWide
+{
+	vec3 pos;
+	vec3 velocity;
+	vec3 xAxis;
+	vec3 yAxis;
+	vec4 alphaHealthFadeRateScaleRate;
+	float scale;
+	float deathRate;
+	bool sizeXAxisToVel;
+	float prevDeltaT;
+	float angSpeed;
+};
+
+#define ReadSourceParticle(o,j,k) {o.pos = particles[j].item[k].pos;\
+								   o.velocity = fromZSignXY (particles[j].item[k].velocityDir) * unpackHalf2x16(particles[j].item[k].scaleLinSpeed).y;\
+								   o.xAxis = fromZSignXY (particles[j].item[k].xAxis);\
+								   o.yAxis = fromZSignXY (particles[j].item[k].yAxis);\
+								   o.alphaHealthFadeRateScaleRate = vec4(float(uint(particles[j].item[k].alpha))/255.0, float(uint(particles[j].item[k].health))/255.0, float(uint(particles[j].item[k].fadeRate))/255.0, unpackHalf2x16(particles[j].item[k].scaleRateFlagsPrevDeltaT).x);\
+								   o.scale = unpackHalf2x16 (particles[j].item[k].scaleLinSpeed).x;\
+								   o.deathRate = float(uint(particles[j].item[k].deathRate))/255.0;\
+								   o.sizeXAxisToVel = ((particles[j].item[k].scaleRateFlagsPrevDeltaT & 0x0000FF00u) >> 8) == 1u;\
+								   o.prevDeltaT = float(particles[j].item[k].scaleRateFlagsPrevDeltaT & 0x000000FFu)/255.0;\
+								   o.angSpeed = particles[j].item[k].angSpeed;}
+
+#define StoreParticle(i,j,k) {particles[j].item[k].pos = i.pos;\
+							 float STOREPARTICLE_velocityLen = length(i.velocity);\
+							 vec3 STOREPARTICLE_velocityNorm = i.velocity;\
+							 if (STOREPARTICLE_velocityLen > 0.0) STOREPARTICLE_velocityNorm /= STOREPARTICLE_velocityLen;\
+							 particles[j].item[k].velocityDir = toZSignXY (STOREPARTICLE_velocityNorm);\
+							 particles[j].item[k].xAxis = toZSignXY (i.xAxis);\
+							 particles[j].item[k].yAxis = toZSignXY (i.yAxis);\
+							 particles[j].item[k].alpha = uint8_t(uint(i.alphaHealthFadeRateScaleRate.x * 255.0));\
+							 particles[j].item[k].health = uint8_t(uint(i.alphaHealthFadeRateScaleRate.y * 255.0));\
+							 particles[j].item[k].fadeRate = uint8_t(uint(i.alphaHealthFadeRateScaleRate.z * 255.0));\
+							 particles[j].item[k].deathRate = uint8_t(uint(i.deathRate * 255.0));\
+							 particles[j].item[k].scaleLinSpeed = packHalf2x16 (vec2(i.scale, STOREPARTICLE_velocityLen));\
+							 particles[j].item[k].scaleRateFlagsPrevDeltaT = packHalf2x16 (vec2(i.alphaHealthFadeRateScaleRate.w, uintBitsToFloat(((i.sizeXAxisToVel ? 1u : 0u) << 8) | (uint(ceil(clamp (emitterParams[nonuniformEXT(gl_GlobalInvocationID.y)].params.deathRateVarInitialScaleInitialAlphaCurTime.a, 0.0, 1.0) * 255.0)) & 0x000000FFu))));\
+							 particles[j].item[k].angSpeed = i.angSpeed;}
+
+uint toZSignXY(vec3 inpVec)
+{
+	uint retVal = ((uint((inpVec.x + 1.0) * 16383.0) << 16) | uint((inpVec.y + 1.0) * 32767.0));
+	if (inpVec.z < 0.0) retVal |= 0x80000000u;
+	return retVal;
+}
+
+vec3 fromZSignXY(uint inpPack)
+{
+	vec3 retVal;
+	retVal.x = (float((inpPack & 0x7FFF0000u) >> 16) / 32766.0) * 2.0 - 1.0;
+	retVal.y = (float(inpPack & 0x0000FFFFu) / 65534.0) * 2.0 - 1.0;
+	vec2 xyVec = vec2(retVal.x, retVal.y);
+	retVal.z = sqrt(clamp (1.0 - dot(xyVec, xyVec), 0.0, 1.0));
+	if ((inpPack & 0x80000000u) != 0) retVal.z = -retVal.z;
+	return retVal;
+}
+
+struct ParticleItem
+{
+	vec3 pos;
+	uint velocityDir;
+	uint xAxis;
+	uint yAxis;
+	uint8_t alpha;
+	uint8_t health;
+	uint8_t fadeRate;
+	uint8_t deathRate;
+	uint scaleLinSpeed;
+	uint scaleRateFlagsPrevDeltaT;
+	float angSpeed;
+};
+
+layout(scalar, set = 0, binding = 0) buffer ParticlesSSBO
+{
+	ParticleItem item[];
+} particles[];
+
+struct EmitterParams
+{
+	vec4 posLinSpeedBase;
+	vec4 dirGravDirGravLenLinSpeedVar;
+	vec4 radAngSpeedBaseAngSpeedVarFadeRateBase;
+	vec4 fadeRateVarScaleRateBaseScaleRateVarDeathRateBase;
+	vec4 deathRateVarInitialScaleInitialAlphaCurTime;
+	uint numParticles;
+	uint elasticitySpreadFlags;
+};
+
+layout (scalar, set = 1, binding = 0) buffer EmitterParamsSSBO
+{
+	EmitterParams params;
+} emitterParams[];
+
+#define currentEmitter emitterParams[nonuniformEXT(gl_GlobalInvocationID.y)]
+
+float getElasticity()
+{
+	return float(bitfieldExtract(currentEmitter.params.elasticitySpreadFlags, 24, 8)) / 255.0;
+}
+
+float getSpread()
+{
+	return float(bitfieldExtract(currentEmitter.params.elasticitySpreadFlags, 16, 8)) / 255.0;
+}
+
+bool isAffectedByGravity()
+{
+	return bitfieldExtract(currentEmitter.params.elasticitySpreadFlags, 0, 1) == 1u;
+}
+
+bool isOrientedToLinVel()
+{
+	return bitfieldExtract(currentEmitter.params.elasticitySpreadFlags, 1, 1) == 1u;
+}
+
+bool isScaledToLinVel()
+{
+	return bitfieldExtract(currentEmitter.params.elasticitySpreadFlags, 2, 1) == 1u;
+}
+
+bool isRepeating()
+{
+	return bitfieldExtract(currentEmitter.params.elasticitySpreadFlags, 3, 1) == 1u;
+}
+
+vec3 getRand (vec3 forPos)
+{
+    float rx = fract(sin(dot(forPos, vec3(-9062.9898,  4528.233,  1296.1938))) * 43758.5453);
+    float ry = fract(cos(dot(forPos, vec3( 1137.1948,  7670.963, -4424.0687))) * 43758.5453);
+    float rz = fract(sin(dot(forPos, vec3( 5649.4233, -3286.248,  4353.5856))) * 93758.5453);
+    
+    return (vec3 (rx,ry,rz) - vec3 (0.5))* 2.0;
+}
+
+vec3 Spin(vec3 axis, vec3 vec, float angle)
+{
+	vec3 axis_n = normalize(axis);
+	float shadow = dot (axis_n, vec);
+	vec3 bring_down = shadow * axis_n;
+	vec3 plane_pt = vec - bring_down;
+
+	vec3 X = normalize(plane_pt);
+	vec3 Y = cross(axis_n, X);
+
+	float pt_x = dot (plane_pt, X);
+	float new_pt_x = cos(angle)*pt_x;
+	float new_pt_y = sin(angle)*pt_x;
+
+	return ((new_pt_x)*X) + ((new_pt_y)*Y) + bring_down;
+}
+
+void main()
+{
+	if ( gl_GlobalInvocationID.x >= currentEmitter.params.numParticles || currentEmitter.params.deathRateVarInitialScaleInitialAlphaCurTime.a == 0.0 ) return ;
+
+	ParticleItemWide curParticle;
+	ReadSourceParticle (curParticle, nonuniformEXT(gl_GlobalInvocationID.y), gl_GlobalInvocationID.x)
+	
+	if (isAffectedByGravity())
+	{
+		vec3 gravity = fromZSignXY (floatBitsToUint(currentEmitter.params.dirGravDirGravLenLinSpeedVar.y)) * currentEmitter.params.dirGravDirGravLenLinSpeedVar.z;
+		curParticle.velocity += gravity * currentEmitter.params.deathRateVarInitialScaleInitialAlphaCurTime.a;
+	}
+
+	curParticle.pos += curParticle.velocity * currentEmitter.params.deathRateVarInitialScaleInitialAlphaCurTime.a;
+
+	vec3 initVelDir = fromZSignXY (floatBitsToUint(currentEmitter.params.dirGravDirGravLenLinSpeedVar.x));
+	if (isOrientedToLinVel())
+	{
+		curParticle.xAxis = normalize (curParticle.velocity);
+		vec3 zAxis = cross (curParticle.xAxis, vec3 (0.0, 1.0, 0.0));
+		if (zAxis == vec3(0.0)) zAxis = cross (curParticle.xAxis, vec3 (-1.0, 0.0, 0.0));
+		curParticle.yAxis = cross (normalize(zAxis), curParticle.xAxis);
+	}
+	else
+	{
+		vec3 spinAxis;
+		if (abs(initVelDir) != vec3 (1.0, 0.0, 0.0))
+		{
+			vec3 rotBiVector = normalize (cross (initVelDir, vec3 (1.0, 0.0, 0.0)));
+			spinAxis = cross (initVelDir, rotBiVector);
+			if (spinAxis.x < 0.0) spinAxis = -spinAxis;
+		}
+		else
+		{
+			vec3 rotBiVector = normalize (cross (initVelDir, vec3 (0.0, 0.0, 1.0)));
+			spinAxis = cross (initVelDir, rotBiVector);
+			if (spinAxis.z < 0.0) spinAxis = -spinAxis;
+		}
+		curParticle.xAxis = Spin (spinAxis, curParticle.xAxis, curParticle.angSpeed * currentEmitter.params.deathRateVarInitialScaleInitialAlphaCurTime.a);
+		curParticle.yAxis = Spin (spinAxis, curParticle.yAxis, curParticle.angSpeed * currentEmitter.params.deathRateVarInitialScaleInitialAlphaCurTime.a);
+	}
+
+	curParticle.alphaHealthFadeRateScaleRate.x *= curParticle.alphaHealthFadeRateScaleRate.z;
+	curParticle.alphaHealthFadeRateScaleRate.x = max (curParticle.alphaHealthFadeRateScaleRate.x, 1.0 / 255.0);
+	curParticle.alphaHealthFadeRateScaleRate.y *= curParticle.deathRate;
+	curParticle.scale *= curParticle.alphaHealthFadeRateScaleRate.w;
+
+	if (isRepeating() && curParticle.alphaHealthFadeRateScaleRate.y < 0.05)
+	{
+		vec3 randVec = getRand (curParticle.pos.xyz);
+		vec3 randVec2 = getRand (curParticle.pos.xyz + randVec * 30.0);
+		vec3 randVecNorm = (randVec + vec3 (1.0)) * 0.5;
+		vec3 randVec2Norm = (randVec2 + vec3 (1.0)) * 0.5;
+		curParticle.pos = currentEmitter.params.posLinSpeedBase.xyz + normalize (cross(initVelDir, randVec)) * currentEmitter.params.radAngSpeedBaseAngSpeedVarFadeRateBase.x;
+		curParticle.velocity = normalize (initVelDir + getSpread() * randVec) * (currentEmitter.params.posLinSpeedBase.a + currentEmitter.params.dirGravDirGravLenLinSpeedVar.a * randVecNorm.x);
+		curParticle.xAxis = normalize (randVec);
+		curParticle.yAxis = normalize (cross (randVec, randVec + vec3(0.1)));
+		curParticle.alphaHealthFadeRateScaleRate.x = currentEmitter.params.deathRateVarInitialScaleInitialAlphaCurTime.z;
+		curParticle.alphaHealthFadeRateScaleRate.y = 1.0f;
+		curParticle.alphaHealthFadeRateScaleRate.z = currentEmitter.params.radAngSpeedBaseAngSpeedVarFadeRateBase.a + currentEmitter.params.fadeRateVarScaleRateBaseScaleRateVarDeathRateBase.x * randVecNorm.y;
+		curParticle.alphaHealthFadeRateScaleRate.w = currentEmitter.params.fadeRateVarScaleRateBaseScaleRateVarDeathRateBase.y + currentEmitter.params.fadeRateVarScaleRateBaseScaleRateVarDeathRateBase.z * randVecNorm.z;
+		curParticle.scale = currentEmitter.params.deathRateVarInitialScaleInitialAlphaCurTime.y;
+		curParticle.deathRate = currentEmitter.params.fadeRateVarScaleRateBaseScaleRateVarDeathRateBase.a + currentEmitter.params.deathRateVarInitialScaleInitialAlphaCurTime.x * randVec2Norm.x;
+		curParticle.angSpeed = currentEmitter.params.radAngSpeedBaseAngSpeedVarFadeRateBase.y + currentEmitter.params.radAngSpeedBaseAngSpeedVarFadeRateBase.z * randVec2Norm.y;
+		curParticle.sizeXAxisToVel = isScaledToLinVel();
+	}
+	
+	StoreParticle (curParticle, nonuniformEXT(gl_GlobalInvocationID.y), gl_GlobalInvocationID.x)
+}
