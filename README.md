@@ -4,7 +4,7 @@
 * [![The HighOmega v3.0 debut demo](https://www.youtube.com/watch?v=8IRNQupyoIs)](https://www.youtube.com/watch?v=8IRNQupyoIs)
 ![Debut Demo gif](marketing/github_debutdemo.gif)
 
-* [![C.L.A.S.H: Colonial Life Advancing Self-sustained Hemisphere - Chapter 1](https://store.steampowered.com/app/4796200/)](https://store.steampowered.com/app/4796200/)
+* [![C.L.A.S.H: Colonial Life Advancing Self-sustained Hemisphere - Chapter 1](https://store.steampowered.com/app/4796200/)](https://store.steampowered.com/app/4796200/) (Please consider buying a copy, your support is deeply appreciated!)
 ![C.L.A.S.H gif](marketing/github_clash.gif)
 
 * [![SauRay(TM) Antiwallhack middleware](https://sauray.tech)](https://sauray.tech)
