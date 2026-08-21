@@ -1,8 +1,6 @@
-# This branch is now archived as CS:GO has been overwritten by CS2
+# SauRay<sup>TM</sup> for TF2 (via IPC through SourceMod)
 
-# SauRay<sup>TM</sup> for CS:GO (via IPC through SourceMod)
-
-This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](https://sauray.tech) for [our CS:GO SourceMod plugin](https://github.com/toomuchvoltage/SauRay/tree/master/CSGO). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
+This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](https://sauray.tech) for [our TF2 SourceMod plugin](https://github.com/toomuchvoltage/SauRay/tree/master/TF2). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
 
 If you are unfamiliar with SauRay<sup>TM</sup>, please read [our technical brief](http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf) or visit [our website](https://sauray.tech).
 
@@ -48,11 +46,11 @@ Vulkan SDK and Visual Studio 2022 are required to compile. A video card with har
 
 # Extracted Maps
 
-Any maps extracted using the content creation pipeline outlined [here](https://github.com/toomuchvoltage/SauRay/tree/master/CSGO) must be placed in `assets/maps/csgo`. Currently `de_nuke.bsp` is converted and can be found as `de_nuke.txt` in that directory. All other converted maps should also have the `.txt` extension.
+Any maps extracted using the content creation pipeline outlined [here](https://github.com/toomuchvoltage/SauRay/tree/master/TF2) must be placed in `assets/maps/tf2`. Currently `koth_badlands.bsp` is converted and can be found as `koth_badlands.txt` in that directory. This implies that this content is only sufficient for the badlands maps and only in the King of The Hill gameplay mode. Extract more content to support more modes/maps! All other converted maps should also have the `.txt` extension.
 
 # How to Compile and Use
 
-Open the Visual Studio project and compile. Pick `Release` unless you're debugging. This produces the binary that our SourceMod plugin will talk to in `x64/Release`. When running the binary, please provide a window number via a single command line argument (default is 1): i.e. `HighOmega.exe 2`. This allows several instances to run on the same machine for different server instances and with different settings (i.e. different resolutions or debug flags).
+Open the Visual Studio project and compile. Pick `Release` unless you're debugging. This produces the binary that our SourceMod plugin will talk to in `x64/Release`. When running the binary, please provide a window number via a single command line argument (default is 1): i.e. `HighOmega.exe 2`. This allows several instances to run on the same machine for different server instances and with different settings (i.e. different resolutions or debug flags). Ensure that SauRay<sup>TM</sup> is running before the server is launched as TF2's `srcds` does not have hibernation like CS:GO's and will run the server loop even if there are no players present on the server.
 
 In the event that you modify raytracing shaders in `source_material/shaders`:
 * Run `spirv-compiler.bat` in the same folder
