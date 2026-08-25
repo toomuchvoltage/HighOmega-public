@@ -942,11 +942,6 @@ vec3 HIGHOMEGA::MATH::Slerp(const vec3& currentVec, const vec3& targetVec, float
 		return (sinf((1.0f - smoothingFactor) * Omega) / sinOmega) * currentVec + (sinf(smoothingFactor * Omega) / sinOmega) * targetVec;
 }
 
-float HIGHOMEGA::MATH::Lerp(float a, float b, float lerpFactor)
-{
-	return a + lerpFactor * (b - a);
-}
-
 vec3 HIGHOMEGA::MATH::QuadraticBezier(const vec3& p0, const vec3& p1, const vec3& p2, float t)
 {
 	float _1_t_sq = 1.0f - t;
