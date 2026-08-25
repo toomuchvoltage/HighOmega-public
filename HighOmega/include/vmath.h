@@ -181,7 +181,17 @@ namespace HIGHOMEGA
 
 		vec3 Slerp(const vec3& currentVec, const vec3& targetVec, float smoothingFactor);
 
-		float Lerp(float a, float b, float lerpFactor);
+		template<typename T>
+		inline T Lerp(T a, T b, float lerpFactor)
+		{
+			return a + lerpFactor * (b - a);
+		}
+
+		template<typename T>
+		inline T Lerp(T a, T b, double lerpFactor)
+		{
+			return a + lerpFactor * (b - a);
+		}
 
 		inline float Clamp(float x, float a, float b)
 		{
