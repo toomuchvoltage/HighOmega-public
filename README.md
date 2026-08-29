@@ -41,11 +41,11 @@ The prerequisites are:
 * VulkanSDK `1.4.313.2` or higher.
 * Visual Studio Community 2022.
 
-**BEFORE YOUR FIRST RUN OF THE DEBUT DEMO:** Run `HighOmega/publishscript/publishscript.bat` to compress textures. It will use less VRAM and run faster.
-
 Simply open `HighOmega.sln`, compile and enjoy the demo. Minimum supported video card for the engine is an nVidia GeForce 1050Ti.
 
 **NOTE:** Some source art assets for the demo were removed due to restrictions on redistribution. Re-running `publishscript.bat` with the parameter `redo` may remove their generated assets by mistake. Simply discard local changes through Git in that event.
+
+**IF YOU CHANGE ANY SOURCE ART (.TGAs):** Delete their `.ktx` files and (re-)run `HighOmega/publishscript/publishscript.bat` to re-compress. They will use less VRAM and sample faster at runtime.
 
 # Content creation
 
@@ -57,7 +57,7 @@ Since nearly all meta-data parsed by the engine are on `Object custom properties
 Setting `pipelineSetupReturn.newMapBelong = "source_material/dev_test_maps/test_zones/"` in `main.cpp` will take you to the engine test map used for testing various features.
 Opening `HighOmega/source_material/dev_test_maps/test_zones/test_zones.blend` will show you how this environment is made. It must be exported with the `Terrain export` flag checked on the export dialog.
 Unchecking this usually means that you are working on an external module that can be linked via linked collections.
-This map has plenty of examples of how this is done, including linked collections inside linked collections that can recursively bring in objects such as rigid bodies with the custody chain intact.
+This map has plenty of examples of how this is done, including linked collections inside linked collections that can recursively bring in rigid bodies with the custody chain intact.
 
 # Modifying shaders
 
