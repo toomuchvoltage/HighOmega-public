@@ -27,6 +27,7 @@
 #extension GL_EXT_control_flow_attributes : enable
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 #define M_PI 3.1415926535
 
@@ -38,9 +39,12 @@ layout (binding = 5) uniform samplerCube skyBox;
 layout (binding = 6) uniform sampler2D backdrop;
 layout (binding = 7) uniform sampler2D nearScattering;
 layout (binding = 8) uniform sampler2D visBufDepthStencil;
-layout (binding = 9, r32ui) uniform uimage2D velocityAttach;
+layout (binding = 9, r32f) uniform readonly image2D LODMinZChain[7];
+layout (binding = 10, r32f) uniform readonly image2D LODMaxZChain[7];
+layout (binding = 11) uniform sampler2D ssGatherDepthStencil;
+layout (binding = 12, r32ui) uniform uimage2D velocityAttach;
 
-layout (scalar, binding = 10) uniform FrameMVPUBO
+layout (scalar, binding = 13) uniform FrameMVPUBO
 {
 	mat4 projectionViewMatrix;
 	vec4 lookEyeX;
@@ -49,7 +53,7 @@ layout (scalar, binding = 10) uniform FrameMVPUBO
 	vec2 whrTanHalfFovY;
 } frameMVP;
 
-layout (scalar, binding = 11) uniform PrevFrameMVPUBO
+layout (scalar, binding = 14) uniform PrevFrameMVPUBO
 {
 	mat4 projectionViewMatrix;
 	vec4 lookEyeX;
@@ -57,6 +61,15 @@ layout (scalar, binding = 11) uniform PrevFrameMVPUBO
 	vec4 sideEyeZ;
 	vec2 whrTanHalfFovY;
 } prevFrameMVP;
+
+vec2 FetchTileValues(uvec3 tileLoc)
+{
+	vec2 retVal = vec2(0.0);
+	ivec2 tileLocXY = ivec2(tileLoc.xy);
+	retVal.x = imageLoad(LODMinZChain[nonuniformEXT(tileLoc.z)], tileLocXY).x;
+	retVal.y = imageLoad(LODMaxZChain[nonuniformEXT(tileLoc.z)], tileLocXY).x;
+	return retVal;
+}
 
 struct InstanceProps
 {
@@ -146,11 +159,10 @@ vec3 unpackDeferredVelocity (uint velocityPacked)
 void main()
 {
 	ivec2 screenRes = textureSize (ssWorldPosAlbedoAttach, 0);
-	vec4 posFetchAlbedo = texelFetch(ssWorldPosAlbedoAttach, ivec2 (gl_FragCoord.xy), 0);
-	vec3 posFetch = posFetchAlbedo.xyz;
-
-	if ( posFetch != vec3 (0.0) )
+	if ( texelFetch(ssGatherDepthStencil, ivec2 (gl_FragCoord.xy), 0).r != 0.0 )
 	{
+		vec4 posFetchAlbedo = texelFetch(ssWorldPosAlbedoAttach, ivec2 (gl_FragCoord.xy), 0);
+		vec3 posFetch = posFetchAlbedo.xyz;
 		vec4 albedoFetch = unpackUnorm4x8(floatBitsToUint (posFetchAlbedo.a));
 		vec3 toPosNorm = normalize (posFetch - vec3 (frameMVP.lookEyeX.a, frameMVP.upEyeY.a, frameMVP.sideEyeZ.a));
 		vec4 normInstIDVelocityRoughnessFetch = texelFetch(ssNormInstIDVelocityRoughnessAttach, ivec2 (gl_FragCoord.xy), 0);
@@ -187,20 +199,78 @@ void main()
 			}
 
 			// Trace for a decent reflection point candidate
-			vec2 traceVec = normalize (getScreenSampleCoord (posFetch + reflectVec) - getScreenSampleCoord(posFetch)) / vec2 (screenRes);
+			vec3 depthSpaceOrigin = projectCoord (posFetch, frameMVP.projectionViewMatrix, vec3 (frameMVP.lookEyeX.a, frameMVP.upEyeY.a, frameMVP.sideEyeZ.a));
+			vec3 depthSpaceReflTip = projectCoord (posFetch + reflectVec, frameMVP.projectionViewMatrix, vec3 (frameMVP.lookEyeX.a, frameMVP.upEyeY.a, frameMVP.sideEyeZ.a));
+			vec3 depthSpaceReflVec = depthSpaceReflTip - depthSpaceOrigin;
+			float depthToVecRatio = (depthSpaceReflTip.z - depthSpaceOrigin.z) / length(depthSpaceReflTip.xy - depthSpaceOrigin.xy);
+			vec2 traceVec = normalize (depthSpaceReflVec.xy) / vec2 (32.0);
 			if ( traceVec != vec2 (0.0) )
 			{
 				vec2 curUV = inUV;
-				for (int i = 0; i != 10; i++)
+				bool hitCoarseTile = false;
+
+				for (int i = 0; i != 46; i++)
 				{
 					curUV += traceVec;
 					if ( any (lessThan (curUV, vec2 (0.0))) || any (greaterThan (curUV, vec2 (0.999999))) ) break;
 					ivec2 curTexel = ivec2(curUV * vec2 (screenRes));
-					if ( texelFetch(ssWorldPosAlbedoAttach, curTexel, 0).xyz != vec3 (0.0) ) continue;
-					if ( dot (normalize (imageLoad (worldPosAttach, curTexel).rgb - posFetch), reflectVec) > 0.99 )
+					if ( texelFetch(ssGatherDepthStencil, curTexel, 0).r != 0.0 ) { i--; continue; }
+					ivec2 curTexelLarge = ivec2(curUV * vec2 (32.0));
+					float invCurCoordToOriginVecLen = 1.0 / length(curUV.xy - depthSpaceOrigin.xy);
+					vec2 tileDepthRange = FetchTileValues (uvec3(curTexelLarge.xy, 1));
+					vec3 curCoord = vec3 (curUV, tileDepthRange.x);
+					float newDepthToVecRatio = (curCoord.z - depthSpaceOrigin.z) * invCurCoordToOriginVecLen;
+					if ( depthToVecRatio < newDepthToVecRatio - 0.006 ) continue;
+					curCoord = vec3 (curUV, tileDepthRange.y);
+					newDepthToVecRatio = (curCoord.z - depthSpaceOrigin.z) * invCurCoordToOriginVecLen;
+					if ( depthToVecRatio > newDepthToVecRatio + 0.006 ) continue;
+					curUV -= traceVec;
+					hitCoarseTile = true;
+					break;
+				}
+
+				if (hitCoarseTile)
+				{
+					hitCoarseTile = false;
+					traceVec = (traceVec * 32.0) / vec2 (64.0);
+					for (int i = 0; i != 91; i++)
 					{
-						reflectColor = texelFetch(modulateAttach, curTexel, 0).rgb;
-						break ;
+						curUV += traceVec;
+						if ( any (lessThan (curUV, vec2 (0.0))) || any (greaterThan (curUV, vec2 (0.999999))) ) break;
+						ivec2 curTexel = ivec2(curUV * vec2 (screenRes));
+						if ( texelFetch(ssGatherDepthStencil, curTexel, 0).r != 0.0 ) { i--; continue; }
+						ivec2 curTexelLarge = ivec2(curUV * vec2 (64.0));
+						float invCurCoordToOriginVecLen = 1.0 / length(curUV.xy - depthSpaceOrigin.xy);
+						vec2 tileDepthRange = FetchTileValues (uvec3(curTexelLarge.xy, 0));
+						vec3 curCoord = vec3 (curUV, tileDepthRange.x);
+						float newDepthToVecRatio = (curCoord.z - depthSpaceOrigin.z) * invCurCoordToOriginVecLen;
+						if ( depthToVecRatio < newDepthToVecRatio - 0.003 ) continue;
+						curCoord = vec3 (curUV, tileDepthRange.y);
+						newDepthToVecRatio = (curCoord.z - depthSpaceOrigin.z) * invCurCoordToOriginVecLen;
+						if ( depthToVecRatio > newDepthToVecRatio + 0.003 ) continue;
+						curUV -= traceVec;
+						hitCoarseTile = true;
+						break;
+					}
+				}
+
+				if (hitCoarseTile)
+				{
+					traceVec = (traceVec * 64.0) / vec2 (screenRes);
+					for (int i = 0; i != 500; i++)
+					{
+						curUV += traceVec;
+						if ( any (lessThan (curUV, vec2 (0.0))) || any (greaterThan (curUV, vec2 (0.999999))) ) break;
+						ivec2 curTexel = ivec2(curUV * vec2 (screenRes));
+						if ( texelFetch(ssGatherDepthStencil, curTexel, 0).r != 0.0 ) { i--; continue; }
+						float invCurCoordToOriginVecLen = 1.0 / length(curUV.xy - depthSpaceOrigin.xy);
+						vec3 curCoord = vec3 (curUV, texelFetch (visBufDepthStencil, curTexel, 0).r);
+						float newDepthToVecRatio = (curCoord.z - depthSpaceOrigin.z) * invCurCoordToOriginVecLen;
+						if ( abs (newDepthToVecRatio - depthToVecRatio) < 0.001 )
+						{
+							reflectColor = texelFetch(modulateAttach, curTexel, 0).rgb;
+							break ;
+						}
 					}
 				}
 			}

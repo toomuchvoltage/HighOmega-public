@@ -1023,6 +1023,7 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 		vramAmount += (unsigned long long)deviceMemoryProperties.memoryHeaps[i].size;
 	}
 	double gbInDouble = (double)vramAmount / (1024.0 * 1024.0 * 1024.0);
+	HIGHOMEGA::capDrawDistance = (gbInDouble <= 5.0);
 	LOG() << "Reported VRAM size: " << toStringPrecision(gbInDouble, 2) << "GB";
 	if (gbInDouble < 3.7)
 		lowMemoryDevice = true;

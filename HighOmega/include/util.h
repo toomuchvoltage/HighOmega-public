@@ -41,6 +41,7 @@ using namespace HIGHOMEGA::MATH;
 
 namespace HIGHOMEGA
 {
+	extern bool capDrawDistance;
 	extern std::shared_mutex CommonSharedMutex;
 	extern std::mt19937_64 mt64Engine;
 	extern std::mutex mt64EngineMutex;

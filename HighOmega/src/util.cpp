@@ -24,6 +24,7 @@
 
 #pragma warning(disable:4996)
 
+bool HIGHOMEGA::capDrawDistance = false;
 std::shared_mutex HIGHOMEGA::CommonSharedMutex;
 std::mt19937_64 HIGHOMEGA::mt64Engine(std::random_device{}());
 std::mutex HIGHOMEGA::mt64EngineMutex;

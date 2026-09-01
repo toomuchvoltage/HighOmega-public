@@ -596,7 +596,7 @@ namespace HIGHOMEGA
 
 		public:
 			RasterletClass Rasterlet;
-			std::vector<ImageClass> Output_HiZ;
+			std::vector<ImageClass> MinZChain, MaxZChain;
 
 			std::vector <MeshMaterial> transformedMaterials;
 			std::unordered_map <MeshMaterial, std::vector<GraphicsModelInstance::MatGeomInstance *>, MeshMaterialHash> entireMatGeomMap;
@@ -625,6 +625,7 @@ namespace HIGHOMEGA
 			void SetStencilClear(unsigned int inStencilClear);
 			void SetDefaultPipelineFlags(PipelineFlags & inDefaultPipelineFlags);
 			void requestSDFBVH(GroupedSDFBVHSubmission & sdfBvhSubmission);
+			void AllocateMipChainImages();
 			void doCulling(FrustumClass &inpFrustum, CULL_MODE inCullMode, int useDepthLayer = -1);
 			unsigned int WorkGroupTwoPassCullX();
 			GroupedRasterSubmission& MakeAsync();

@@ -2474,6 +2474,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 
 int HIGHOMEGA::WORLD::ZoneStreamingClass::tilesPerDrawRegionEdge()
 {
+	if (HIGHOMEGA::capDrawDistance) return 8;
 	return 10;
 }
 
