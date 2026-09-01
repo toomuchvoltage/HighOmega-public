@@ -1,3 +1,5 @@
+# TF2 upgraded to 64-bit, breaking all native extensions (including SauRay's). This is here for archival purposes only.
+
 # SauRay<sup>TM</sup> for TF2 (via IPC through SourceMod)
 
 This is a branch of HighOmega hosting [SauRay<sup>TM</sup>](https://sauray.tech) for [our TF2 SourceMod plugin](https://github.com/toomuchvoltage/SauRay/tree/master/TF2). Please note that SauRay<sup>TM</sup> branches of this repository -- such as this -- only contain implementation details relevant to the associated game.
@@ -34,7 +36,7 @@ All games using US20220219086A1 or this implementation of it must clearly declar
 Beyond what is stated in http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf this source code does not provide any warranties of merchantability or fitness for any particular purpose.
 ```
 
-All else -- i.e. regular HighOmega source code -- is provided under the MIT license. A complete version of HighOmega will be provided under the MIT license at a later date.
+All else -- i.e. regular HighOmega source code -- is provided under the MIT license.
 
 # Why IPC?
 
