@@ -2851,6 +2851,19 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::requestSDFBVH(GroupedSDFBVHSubm
 	requestsSDFBVH = true;
 }
 
+void HIGHOMEGA::RENDER::GroupedRasterSubmission::AllocateMipChainImages()
+{
+	if (MinZChain.size() > 0) return; // Already done
+	MinZChain.resize(7);
+	MaxZChain.resize(7);
+	for (int i = 0; i != 7; i++)
+	{
+		MinZChain[i].CreateImageStore(Instance, R32F, 64 >> i, 64 >> i, 1, _2D, true);
+		MaxZChain[i].CreateImageStore(Instance, R32F, 64 >> i, 64 >> i, 1, _2D, true);
+	}
+
+}
+
 void HIGHOMEGA::RENDER::GroupedRasterSubmission::doCulling(FrustumClass &inpFrustum, CULL_MODE inCullMode, int useDepthLayer)
 {
 	vec3 frustumCullEye = inpFrustum.eye;
@@ -2933,9 +2946,7 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::doCulling(FrustumClass &inpFrus
 
 	if (!Setup_HiZ)
 	{
-		Output_HiZ.resize(7);
-		for (int i = 0; i != 7; i++)
-			Output_HiZ[i].CreateImageStore(Instance, R32F, 64 >> i, 64 >> i, 1, _2D, true);
+		AllocateMipChainImages();
 
 		mipParams_HiZ.blockSize[0] = (unsigned int)ceil((double)frameBuffer->getWidth() / 64.0);
 		mipParams_HiZ.blockSize[1] = (unsigned int)ceil((double)frameBuffer->getHeight() / 64.0);
@@ -2947,14 +2958,22 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::doCulling(FrustumClass &inpFrus
 		MipChainPass2ShaderResources_HiZ = new ShaderResourceSet;
 
 		MipChainPass1ShaderResources_HiZ->AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 0, *(frameBuffer->GetDepthStencil()), useDepthLayer);
-		MipChainPass1ShaderResources_HiZ->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 1, Output_HiZ[0], -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
-		MipChainPass1ShaderResources_HiZ->AddResource(RESOURCE_UBO, COMPUTE, 0, 2, mipParamsBuffer_HiZ);
-		MipChainPass1ShaderResources_HiZ->Create(inpFrustum.reverseZ ? "shaders/depthmip1ReverseZ.comp.spv" : "shaders/depthmip1.comp.spv", "main");
+		MipChainPass1ShaderResources_HiZ->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 1, MinZChain[0], -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
+		MipChainPass1ShaderResources_HiZ->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 2, MaxZChain[0], -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
+		MipChainPass1ShaderResources_HiZ->AddResource(RESOURCE_UBO, COMPUTE, 0, 3, mipParamsBuffer_HiZ);
+		MipChainPass1ShaderResources_HiZ->Create("shaders/depthmip1.comp.spv", "main");
 		MipChainPass1_HiZ->MakeDispatch(Instance, std::string("DepthMip1"), *MipChainPass1ShaderResources_HiZ, 8, 8, 1);
 
-		for (int i = 0; i != 7; i++)
-			MipChainPass2ShaderResources_HiZ->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, i, Output_HiZ[i], -1, i == 0 ? ShaderResource::SHADER_RESOURCE_USAGE::USAGE_CONSUMER : ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
-		MipChainPass2ShaderResources_HiZ->Create(inpFrustum.reverseZ ? "shaders/depthmip2ReverseZ.comp.spv" : "shaders/depthmip2.comp.spv", "main");
+		std::vector<ShaderResource> RestOfMinZChain, RestOfMaxZChain;
+		MipChainPass2ShaderResources_HiZ->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 0, MinZChain[0], -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_CONSUMER);
+		for (int i = 1; i != 7; i++)
+			RestOfMinZChain.emplace_back(RESOURCE_IMAGE_STORE, COMPUTE, 0, 1, MinZChain[i], -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
+		MipChainPass2ShaderResources_HiZ->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 1, RestOfMinZChain, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
+		MipChainPass2ShaderResources_HiZ->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 2, MaxZChain[0], -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_CONSUMER);
+		for (int i = 1; i != 7; i++)
+			RestOfMaxZChain.emplace_back(RESOURCE_IMAGE_STORE, COMPUTE, 0, 3, MaxZChain[i], -1, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
+		MipChainPass2ShaderResources_HiZ->AddResource(RESOURCE_IMAGE_STORE, COMPUTE, 0, 3, RestOfMaxZChain, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
+		MipChainPass2ShaderResources_HiZ->Create("shaders/depthmip2.comp.spv", "main");
 		MipChainPass2_HiZ->MakeDispatch(Instance, std::string("DepthMip2"), *MipChainPass2ShaderResources_HiZ, 1, 1, 1);
 
 		Setup_HiZ = true;
@@ -3267,8 +3286,8 @@ void HIGHOMEGA::RENDER::GroupedRasterSubmission::Render()
 				cullingMainpassResourceSet->AddResource(RESOURCE_SSBO, COMPUTE, 0, 5, TrackedVisDataBuf, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_PRODUCER);
 				cullingMainpassResourceSet->AddResource(RESOURCE_SSBO, COMPUTE, 0, 6, *GroupedRenderSubmission::SceneData->transformBuffer);
 				std::vector<ShaderResource> mipChain;
-				for (int i = 0; i != Output_HiZ.size(); i++)
-					mipChain.emplace_back(RESOURCE_SAMPLER, COMPUTE, 0, 7, Output_HiZ[i]);
+				for (int i = 0; i != (cachedCullingFrustum->reverseZ ? MinZChain.size() : MaxZChain.size()); i++)
+					mipChain.emplace_back(RESOURCE_SAMPLER, COMPUTE, 0, 7, (cachedCullingFrustum->reverseZ ? MinZChain[i] : MaxZChain[i]));
 				cullingMainpassResourceSet->AddResource(RESOURCE_SAMPLER, COMPUTE, 0, 7, mipChain);
 				cullingMainpassResourceSet->Create(cullMode == TWOPASS_NO_FRUSTUM ? "shaders/twoPassCullMainpassNoFrustum.comp.spv" : (cachedCullingFrustum->reverseZ ? "shaders/twoPassCullMainpassReverseZ.comp.spv" : "shaders/twoPassCullMainpass.comp.spv"), "main");
 				cullingMainpassCompute->MakeDispatch(Instance, std::string("cullMainpass"), *cullingMainpassResourceSet, (unsigned int)ceil((double)GroupedRenderSubmission::SceneData->instancePropsCount / (double)WorkGroupTwoPassCullX()), 1, 1);
@@ -5954,9 +5973,18 @@ void HIGHOMEGA::RENDER::PASSES::ScreenSpaceFXClass::Create(TriClass & PostProces
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 6, SkyDome.fullBackDrop);
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 7, NearScattering.blurPass.blurVAttach);
 	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 8, VisibilityPass.depthStencilAttach);
-	shader.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 9, MoBlur.velocityAttach);
-	shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 10, VisibilityPass.visFrustum.Buffer);
-	shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 11, VisibilityPass.prevVisFrustum.Buffer);
+	VisibilityPass.submission.AllocateMipChainImages(); // Pre-populate these objects cause we need the references right now...
+	std::vector<ShaderResource> MinZChainRes, MaxZChainRes;
+	for (int i = 0; i != 7; i++)
+		MinZChainRes.emplace_back(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 9, VisibilityPass.submission.MinZChain[i]);
+	shader.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 9, MinZChainRes);
+	for (int i = 0; i != 7; i++)
+		MaxZChainRes.emplace_back(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 10, VisibilityPass.submission.MaxZChain[i]);
+	shader.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 10, MaxZChainRes);
+	shader.AddResource(RESOURCE_SAMPLER, FRAGMENT, 0, 11, ScreenSpaceGather.depthStencilAttach);
+	shader.AddResource(RESOURCE_IMAGE_STORE, FRAGMENT, 0, 12, MoBlur.velocityAttach);
+	shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 13, VisibilityPass.visFrustum.Buffer);
+	shader.AddResource(RESOURCE_UBO, FRAGMENT, 0, 14, VisibilityPass.prevVisFrustum.Buffer);
 	submission.SetShader("default", shader);
 }
 
