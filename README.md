@@ -36,7 +36,7 @@ All games using US20220219086A1 or this implementation of it must clearly declar
 Beyond what is stated in http://toomuchvoltage.com/pub/sauray_techbrief/sauray_techbrief.pdf this source code does not provide any warranties of merchantability or fitness for any particular purpose.
 ```
 
-All else -- i.e. regular HighOmega source code -- is provided under the MIT license. A complete version of HighOmega will be provided under the MIT license at a later date.
+All else -- i.e. regular HighOmega source code -- is provided under the MIT license.
 
 # Why IPC?
 
