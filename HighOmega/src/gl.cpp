@@ -6506,68 +6506,98 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateInstanceData(std::vector <VkAccelerat
 		}
 }
 
-unsigned long long HIGHOMEGA::GL::KHR_RT::RTScene::rtSceneID(std::function<void(unsigned int, BufferClass*, BufferClass*, bool)>& rtCopyTransforms)
+void HIGHOMEGA::GL::KHR_RT::RTScene::CreateOrUpdateRTResources(RTScene* optionalScene, InstanceClass* instancePtr, std::vector<GeometryClass*>& geomToCreateOrUpdate)
 {
-	unsigned long long updateHash = 0ull;
 	blasBuildParams blBuildParams;
-	std::vector<RTGeometry *> rebuildGeoms;
-	unsigned int rebuildInstCount = GetTraceItemCount();
-	rebuildGeoms.reserve(rebuildInstCount);
-
+	std::vector<RTGeometry*> rebuildRTGeoms;
+	unsigned long long updateHash = 0ull;
 	VkDeviceAddress bufferDeviceAddress = 0ull;
 
-	for (std::pair <const unsigned long long, std::vector<TraceItem>> & traceItemKV : allTraceItems)
-		for (TraceItem & curTraceItem : traceItemKV.second)
-			if (curTraceItem.geomRef->getRTGeom().dirty || !curTraceItem.geomRef->getRTGeom().created)
+	for (GeometryClass* curGeom : geomToCreateOrUpdate)
+		if (curGeom->getRTGeom().dirty || !curGeom->getRTGeom().created)
+		{
+			if (!curGeom->getRTGeom().created)
 			{
-				if (!curTraceItem.geomRef->getRTGeom().created)
+				if (!bufferDeviceAddress)
 				{
-					if (!bufferDeviceAddress)
-					{
-						VkBufferDeviceAddressInfo bufDevAdInfo;
-						bufDevAdInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-						bufDevAdInfo.pNext = VK_NULL_HANDLE;
-						giantVertBufferSharedMutex.lock_shared();
-						bufDevAdInfo.buffer = giantVertBuffer->buffer;
-						giantVertBufferSharedMutex.unlock_shared();
-						bufferDeviceAddress = RTInstance::fpGetBufferDeviceAddressKHR(Instance.device, &bufDevAdInfo);
-					}
-
-					curTraceItem.geomRef->rtGeom.SetGeom(curTraceItem.geomRef->vertBuffer, bufferDeviceAddress, curTraceItem.geomRef->triCount, curTraceItem.geomRef->vertCount,
-														 curTraceItem.geomRef->getVertexOffsetInGiantVertexBuffer(), curTraceItem.geomRef->getIndexOffsetInGiantVertexBuffer(),
-														 sizeof(RasterVertex), curTraceItem.geomRef->isAlphaKeyedCache, curTraceItem.geomRef->immutable, *ptrToInstance);
-					needReCreation = true;
-					rebuildGeoms.push_back(&curTraceItem.geomRef->getRTGeom());
+					VkBufferDeviceAddressInfo bufDevAdInfo;
+					bufDevAdInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+					bufDevAdInfo.pNext = VK_NULL_HANDLE;
+					giantVertBufferSharedMutex.lock_shared();
+					bufDevAdInfo.buffer = giantVertBuffer->buffer;
+					giantVertBufferSharedMutex.unlock_shared();
+					bufferDeviceAddress = RTInstance::fpGetBufferDeviceAddressKHR(Instance.device, &bufDevAdInfo);
 				}
-				needUpdate = true;
-				curTraceItem.geomRef->getRTGeom().CreateOrUpdate(&blBuildParams, &updateHash);
+
+				curGeom->rtGeom.SetGeom(curGeom->vertBuffer, bufferDeviceAddress, curGeom->triCount, curGeom->vertCount,
+					curGeom->getVertexOffsetInGiantVertexBuffer(), curGeom->getIndexOffsetInGiantVertexBuffer(),
+					sizeof(RasterVertex), curGeom->isAlphaKeyedCache, curGeom->immutable, *instancePtr);
+				if (optionalScene) optionalScene->needReCreation = true;
+				rebuildRTGeoms.push_back(&curGeom->getRTGeom());
 			}
+			if (optionalScene) optionalScene->needUpdate = true;
+			curGeom->getRTGeom().CreateOrUpdate(&blBuildParams, &updateHash);
+		}
+
 
 	if (blBuildParams.blasBuildInfos.size() > 0)
 	{
-		if (!semaphore.haveSemaphore)
-			semaphore.Semaphore(ptrToInstance);
-
-		if (previousUpdateHash != updateHash || rebuildGeoms.size())
+		if (optionalScene)
 		{
-			BeginCommandBuffer(*ptrToInstance, 3u, 0u);
+			if (!optionalScene->semaphore.haveSemaphore)
+				optionalScene->semaphore.Semaphore(instancePtr);
 
-			RTInstance::fpCmdBuildAccelerationStructuresKHR(cmdBuffers[0], (unsigned int)blBuildParams.blasBuildInfos.size(),
-															(const VkAccelerationStructureBuildGeometryInfoKHR *)blBuildParams.blasBuildInfos.data(),
-															(const VkAccelerationStructureBuildRangeInfoKHR * const *)blBuildParams.blasBuildRanges.data());
-			EndCommandBuffer(0);
-			previousUpdateHash = updateHash;
+			if (optionalScene->previousUpdateHash != updateHash || rebuildRTGeoms.size())
+			{
+				optionalScene->BeginCommandBuffer(*instancePtr, 3u, 0u);
+
+				RTInstance::fpCmdBuildAccelerationStructuresKHR(optionalScene->cmdBuffers[0], (unsigned int)blBuildParams.blasBuildInfos.size(),
+					(const VkAccelerationStructureBuildGeometryInfoKHR*)blBuildParams.blasBuildInfos.data(),
+					(const VkAccelerationStructureBuildRangeInfoKHR* const*)blBuildParams.blasBuildRanges.data());
+				optionalScene->EndCommandBuffer(0);
+				optionalScene->previousUpdateHash = updateHash;
+			}
+
+			optionalScene->WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&optionalScene->semaphore}, 0);
+			optionalScene->SignalSemaphores(std::unordered_set<SemaphoreClass*>{&optionalScene->semaphore}, 0);
+			if (rebuildRTGeoms.size()) optionalScene->DoCPUSync(0);
+			else optionalScene->NoCPUSync(0);
+			optionalScene->SubmitCommandBuffer(0);
 		}
+		else
+		{
 
-		WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore}, 0);
-		SignalSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore}, 0);
-		if (rebuildGeoms.size()) DoCPUSync(0);
-		else NoCPUSync(0);
-		SubmitCommandBuffer(0);
+			if (rebuildRTGeoms.size())
+			{
+				CommandBuffer createBlases;
+				createBlases.BeginCommandBuffer(*instancePtr, 1u, 0u);
+
+				RTInstance::fpCmdBuildAccelerationStructuresKHR(createBlases.cmdBuffers[0], (unsigned int)blBuildParams.blasBuildInfos.size(),
+					(const VkAccelerationStructureBuildGeometryInfoKHR*)blBuildParams.blasBuildInfos.data(),
+					(const VkAccelerationStructureBuildRangeInfoKHR* const*)blBuildParams.blasBuildRanges.data());
+				createBlases.EndCommandBuffer(0);
+				createBlases.DoCPUSync(0);
+				createBlases.SubmitCommandBuffer(0);
+			}
+		}
 	}
 
-	for (RTGeometry * curGeom : rebuildGeoms)
+	for (RTGeometry* curGeom : rebuildRTGeoms)
 		curGeom->FetchBlasAddress();
+}
+
+unsigned long long HIGHOMEGA::GL::KHR_RT::RTScene::rtSceneID(std::function<void(unsigned int, BufferClass*, BufferClass*, bool)>& rtCopyTransforms)
+{
+	blasBuildParams blBuildParams;
+	std::vector<GeometryClass *> rebuildGeoms;
+	unsigned int rebuildInstCount = GetTraceItemCount();
+
+	for (std::pair <const unsigned long long, std::vector<TraceItem>>& traceItemKV : allTraceItems)
+		for (TraceItem& curTraceItem : traceItemKV.second)
+			if (curTraceItem.geomRef->getRTGeom().dirty || !curTraceItem.geomRef->getRTGeom().created)
+				rebuildGeoms.push_back(curTraceItem.geomRef);
+
+	CreateOrUpdateRTResources(this, this->ptrToInstance, rebuildGeoms);
 
 	if (needReCreation)
 	{

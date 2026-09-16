@@ -262,10 +262,8 @@ namespace HIGHOMEGA
 			static thread_local unsigned int SceneDataClaims;
 			GroupedRenderSubmission();
 			~GroupedRenderSubmission();
-			virtual void Add(GraphicsModelInstance& inpModelInst, std::function<bool(const MeshMaterial & curMat)> inpFilterFunction = [](const MeshMaterial & curMat) -> bool {
-				if (curMat.postProcess) return false;
-				return true;
-			}) = 0;
+			static bool defaultFilterFunction(const MeshMaterial& curMat);
+			virtual void Add(GraphicsModelInstance& inpModelInst, std::function<bool(const MeshMaterial& curMat)> inpFilterFunction = defaultFilterFunction) = 0;
 			virtual void Remove(GraphicsModelInstance& inpModelInst) = 0;
 		};
 		class GraphicsModelInstance
@@ -412,11 +410,7 @@ namespace HIGHOMEGA
 			~GroupedTraceSubmission();
 			void ChangeSignal(GeometryClass *changedGeom);
 			unsigned long long SceneID();
-
-			void Add(GraphicsModelInstance & inpModelInst, std::function<bool(const MeshMaterial & curMat)> inpFilterFunction = [](const MeshMaterial & curMat) -> bool {
-				if (curMat.postProcess) return false;
-				return true;
-			});
+			void Add(GraphicsModelInstance& inpModelInst, std::function<bool(const MeshMaterial & curMat)> inpFilterFunction = defaultFilterFunction);
 			void Remove(GraphicsModelInstance& inpModelInst);
 			void DeleteRTResources();
 		};
@@ -509,14 +503,9 @@ namespace HIGHOMEGA
 			unsigned int CompMortonWorkGroupSize();
 
 		public:
-			static std::function<bool(const MeshMaterial& curMat)> defaultFilterFunction;
 			void ChangeSignal(GeometryClass *changedGeom);
 			unsigned long long SceneID();
-
-			void Add(GraphicsModelInstance& inpModel, std::function<bool(const MeshMaterial& curMat)> inpFilterFunction = [](const MeshMaterial& curMat) -> bool {
-				if (curMat.postProcess) return false;
-				return true;
-			});
+			void Add(GraphicsModelInstance& inpModelInst, std::function<bool(const MeshMaterial& curMat)> inpFilterFunction = defaultFilterFunction);
 			void Remove(GraphicsModelInstance& inpModelInst);
 			void DeleteSDFBVHResources();
 			~GroupedSDFBVHSubmission();
@@ -608,10 +597,7 @@ namespace HIGHOMEGA
 			~GroupedRasterSubmission();
 			void Create(InstanceClass & ptrToInstance);
 			void ChangeSignal(GeometryClass *changedGeom);
-			void Add(GraphicsModelInstance& inpModelInst, std::function<bool(const MeshMaterial & curMat)> inpFilterFunction = [](const MeshMaterial & curMat) -> bool {
-				if (curMat.postProcess) return false;
-				return true;
-			});
+			void Add(GraphicsModelInstance& inpModelInst, std::function<bool(const MeshMaterial & curMat)> inpFilterFunction = defaultFilterFunction);
 			static bool postProcessOnlyFilter(const MeshMaterial & curMat);
 			static bool blendOnlyFilter(const MeshMaterial & curMat);
 			static bool decalOnlyFilter(const MeshMaterial& curMat);

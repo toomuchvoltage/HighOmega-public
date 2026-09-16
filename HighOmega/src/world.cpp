@@ -1052,12 +1052,12 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::UpdateBulletHolesForItem(unsigned long
 			}
 }
 
-unsigned long long HIGHOMEGA::WORLD::PhysicalItemClass::Add(std::string& newGroupId, RigidBody* oobbPiece, MeshMaterial& origMeshMaterial, std::vector <TriUV>& triList)
+unsigned long long HIGHOMEGA::WORLD::PhysicalItemClass::Add(RigidBody* oobbPiece, GraphicsModel* pieceModel)
 {
 	unsigned long long pickedId = threadSafeMersenneTwister64Bit();
 	RigidBodyItem createdItem;
 
-	createdItem.modelRef = new GraphicsModel(newGroupId, origMeshMaterial, triList);
+	createdItem.modelRef = pieceModel;
 	createdItem.rigidBodyRef = oobbPiece;
 
 	allItems[pickedId] = createdItem;
@@ -1172,6 +1172,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::CutOutThread(PhysicalItemClass* physic
 		currentMapGeom = PhysicalItemClass::destructibles[groupId].sourceTriUVList;
 		currentMapPropBlock = &PhysicalItemClass::destructibles[groupId].propBlock;
 	}
+	MeshMaterial destructibleMaterial = physicalItemsCollection->allItems[physicalItemId].modelRef->getMaterialById(groupId);
 
 	std::vector<TriUV> cullGeom, ring, cap, slicedmap, tmp, ringFacingInside;
 	MakeCylinder(hitPoint, hitNorm, 2.0f, 4.0f, cullGeom);
@@ -1212,7 +1213,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::CutOutThread(PhysicalItemClass* physic
 
 		if (!tmpIntersectionList.size())
 		{
-			physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string(""), newGroupId, tmpRigidBodyAABB, groupId, groupedTris);
+			physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string(""), newGroupId, tmpRigidBodyAABB, new GraphicsModel(newGroupId, destructibleMaterial, groupedTris), groupId, groupedTris);
 		}
 		else
 		{
@@ -1238,18 +1239,31 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::CutOutThread(PhysicalItemClass* physic
 		tmpRigidBody->lin_v = hitDir;
 		tmpRigidBody->ang_v = vec3((rand() % 100 - 50) * 0.02f) * 0.2f;
 
-		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string(""), newGroupId, tmpRigidBody, groupId, groupedTris);
+		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string(""), newGroupId, tmpRigidBody, new GraphicsModel(newGroupId, destructibleMaterial, groupedTris), groupId, groupedTris);
 	}
 
 	// If there's nothing left for the map destroy the rendered geom and rigid body piece
 	if (!stuckToMapTris.size())
 	{
-		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string("remove"), groupId, nullptr, groupId, std::vector<TriUV>());
+		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string("remove"), groupId, nullptr, nullptr, groupId, std::vector<TriUV>());
 	}
 	else // Otherwise update the rendered geom and rigid body piece with the left-over triangles
 	{
-		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string("change"), groupId, nullptr, groupId, stuckToMapTris);
+		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string("change"), groupId, nullptr, nullptr, groupId, stuckToMapTris);
 	}
+
+	std::vector<GeometryClass*> buildGeom;
+	for (AddParams& curAddParam : physicalItemsCollection->deferredAdds)
+	{
+		if (!curAddParam.pieceModel) continue;
+		for (std::pair<const MeshMaterial, std::list<GeometryClass>>& curMatGeoms : curAddParam.pieceModel->MaterialGeomMap)
+		{
+			if (!GroupedTraceSubmission::defaultFilterFunction(curMatGeoms.first)) continue;
+			for (GeometryClass& curGeom : curMatGeoms.second)
+				buildGeom.push_back(&curGeom);
+		}
+	}
+	RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
 
 	physicalItemsCollection->booleanOpThreadFinished = true;
 }
@@ -1270,6 +1284,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::ShatterThread(PhysicalItemClass* physi
 		addedPiece.aabbMax = PhysicalItemClass::destructibles[groupId].sourceMax;
 		currentMapPropBlock = &PhysicalItemClass::destructibles[groupId].propBlock;
 	}
+	MeshMaterial destructibleMaterial = physicalItemsCollection->allItems[physicalItemId].modelRef->getMaterialById(groupId);
 
 	addedPiece.cent = (addedPiece.aabbMin + addedPiece.aabbMax) * 0.5f;
 	float slicerRad = addedPiece.rad = (addedPiece.aabbMax - addedPiece.cent).length();
@@ -1457,9 +1472,22 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::ShatterThread(PhysicalItemClass* physi
 		tmpRigidBodyAABB->ang_v = vec3((rand() % 100 - 50) * 0.02f) * 0.4f;
 		tmpRigidBodyAABB->lin_v = -hitNorm * 3.0f + hitDir * 0.25f + vec3((rand() % 100 - 50) * 0.02f) * 0.2f;
 
-		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string(""), newGroupId, tmpRigidBodyAABB, groupId, curPiece.geom);
+		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string(""), newGroupId, tmpRigidBodyAABB, new GraphicsModel(newGroupId, destructibleMaterial, curPiece.geom), groupId, curPiece.geom);
 	}
-	physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string("remove"), groupId, nullptr, groupId, std::vector<TriUV>());
+	physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string("remove"), groupId, nullptr, nullptr, groupId, std::vector<TriUV>());
+
+	std::vector<GeometryClass*> buildGeom;
+	for (AddParams& curAddParam : physicalItemsCollection->deferredAdds)
+	{
+		if (!curAddParam.pieceModel) continue;
+		for (std::pair<const MeshMaterial, std::list<GeometryClass>>& curMatGeoms : curAddParam.pieceModel->MaterialGeomMap)
+		{
+			if (!GroupedTraceSubmission::defaultFilterFunction(curMatGeoms.first)) continue;
+			for (GeometryClass& curGeom : curMatGeoms.second)
+				buildGeom.push_back(&curGeom);
+		}
+	}
+	RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
 
 	physicalItemsCollection->booleanOpThreadFinished = true;
 }
@@ -1499,7 +1527,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::Update(std::function <bool(vec3&, vec3
 					std::lock_guard<std::mutex> lk(destructibleCacheMutex);
 					destructMaterial = destructibles[curAdd.origGroupId].sourceModel->getMaterialById(curAdd.origGroupId);
 				}
-				unsigned long long addedPieceId = Add(curAdd.newGroupId, curAdd.oobbPiece, destructMaterial, curAdd.triList);
+				unsigned long long addedPieceId = Add(curAdd.oobbPiece, curAdd.pieceModel);
 				HIGHOMEGA::FIZ_X::MATERIAL& objMat = allItems[addedPieceId].rigidBodyRef->pieces[0].mat;
 				vec3 objPos = allItems[addedPieceId].rigidBodyRef->pos;
 				vec3 objLinV = allItems[addedPieceId].rigidBodyRef->lin_v;
@@ -1582,7 +1610,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::Update(std::function <bool(vec3&, vec3
 						rigidBodyOrient.i[0][3] = 0.0f;
 						rigidBodyOrient.i[1][3] = 0.0f;
 						rigidBodyOrient.i[2][3] = 0.0f;
-						Add(newDebrisName, oobbRigidBody, destructMaterialFound, curGeomToLoad.geomTriUV);
+						Add(oobbRigidBody, new GraphicsModel(newDebrisName, destructMaterialFound, curGeomToLoad.geomTriUV));
 						oobbRigidBody->orient = rigidBodyOrient;
 						oobbRigidBody->pos = rigidBodyPos;
 						CommonSharedMutex.unlock();
@@ -2442,7 +2470,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 		zoneStreamingPtr->particleSystemLoaders[threadId].UpdateSDFs();
 		zoneStreamingPtr->guidedModelLoaders[threadId].UpdateSDFs();
 
-		if (threadId == 0 && !RTInstance::Enabled())
+		if (threadId == 0)
 		{
 			while (true)
 			{
@@ -2455,7 +2483,24 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 					}
 				if (othersDone) break;
 			}
-			zoneStreamingPtr->physicalItemLoaders[threadId].UpdateSDFs(zoneStreamingPtr->physicalItemLoaders);
+			if (RTInstance::Enabled())
+			{
+				std::vector<GeometryClass*> buildGeom;
+				for (int i = 0; i != HIGHOMEGA_ZONE_STREAMING_THREAD_COUNT; i++)
+					for (std::pair<const unsigned long long, PhysicalItemClass::RigidBodyItem>& curItem : zoneStreamingPtr->physicalItemLoaders[i].allItems)
+					{
+						if (!curItem.second.modelRef) continue;
+						for (std::pair<const MeshMaterial, std::list<GeometryClass>>& curMatGeoms : curItem.second.modelRef->MaterialGeomMap)
+						{
+							if (!GroupedTraceSubmission::defaultFilterFunction(curMatGeoms.first)) continue;
+							for (GeometryClass& curGeom : curMatGeoms.second)
+								buildGeom.push_back(&curGeom);
+						}
+					}
+				RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
+			}
+			else
+				zoneStreamingPtr->physicalItemLoaders[threadId].UpdateSDFs(zoneStreamingPtr->physicalItemLoaders);
 		}
 
 		zoneStreamingPtr->producedZones[threadId] = true;
@@ -4271,10 +4316,6 @@ HIGHOMEGA::WORLD::DefaultPipelineSetupClass::DefaultPipelineSetupClass(std::stri
 		MainMenuPassed = true;
 	}
 
-	sdfBvhSubmission.defaultFilterFunction = [](const MeshMaterial& curMat) -> bool {
-		if (curMat.postProcess) return false;
-		return true;
-	};
 	zoneStreaming.Create(mapBelong, {&VisibilityPass.submission, &DecalPass.submission, &mainRTSubmission, &sdfBvhSubmission, 
 									 &ShadowMapCascadeNear.SetMode(ShadowMapClass::SHADOWMAP_MODE::ORTHO).getSubmission(),
 									 &ShadowMapCascadeFar.SetMode(ShadowMapClass::SHADOWMAP_MODE::ORTHO).getSubmission(),
@@ -4292,7 +4333,8 @@ HIGHOMEGA::WORLD::DefaultPipelineSetupClass::DefaultPipelineSetupClass(std::stri
 		else if (inpSub == &VisibilityPass.submission)
 			inpSub->Add(*inpGraphicsModelInst, GroupedRasterSubmission::noBlendOrPostProcessOrDecalFilter);
 		else
-			inpSub->Add(*inpGraphicsModelInst);
+			inpSub->Add(*inpGraphicsModelInst); // If you change this from defaultFilterFunction(...) for raytracing, also change
+												// bottom of produceZones(...) and both CutOut and Shatter thread codes
 	});
 	CreateWorld(worldParams);
 
@@ -4447,7 +4489,7 @@ HIGHOMEGA::WORLD::PipelineSetupReturn HIGHOMEGA::WORLD::DefaultPipelineSetupClas
 		zoneStreaming.Update(MainFrustum.eye);
 		static bool prevHitEsc = false;
 		bool hitEsc = GetStateOfAction(CMD_MAIN_MENU);
-		if (!hitEsc && prevHitEsc)
+		if (!hitEsc && prevHitEsc && !physicalItemsCollection.booleanOpThread) // Booleans now prepare BLASes on their threads...
 		{
 			prevHitEsc = hitEsc;
 			if (clairAudio) AudioSystem.Pause(clairAudio);

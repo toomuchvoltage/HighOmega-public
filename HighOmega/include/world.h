@@ -557,7 +557,7 @@ namespace HIGHOMEGA
 			vec3 cachedPos = vec3(0.0f);
 			std::vector <GroupedRenderSubmission*> subList;
 			std::function<void(GroupedRenderSubmission*, GraphicsModelInstance*)> perSubmissionCall;
-			unsigned long long Add(std::string& newGroupId, RigidBody* origPiece, MeshMaterial& origMeshMaterial, std::vector <TriUV>& triList);
+			unsigned long long Add(RigidBody* oobbPiece, GraphicsModel* pieceModel);
 
 			static void CutOutThread(PhysicalItemClass* physicalItemsCollection, unsigned long long physicalItemId, std::string groupId, vec3 hitDir, vec3 hitPoint, vec3 hitNorm, float cutRadius, float cutDepth);
 			static void ShatterThread(PhysicalItemClass* physicalItemsCollection, unsigned long long physicalItemId, std::string groupId, vec3 hitDir, vec3 hitPoint, vec3 hitNorm);
@@ -579,10 +579,10 @@ namespace HIGHOMEGA
 				std::string newGroupId;
 				std::string origGroupId;
 				RigidBody* oobbPiece;
-				MeshMaterial origMeshMaterial;
+				GraphicsModel* pieceModel;
 				std::vector <TriUV> triList;
-				AddParams(unsigned long long inPhysicalItemId, std::string inpOrigPieceAction, std::string inpNewGroupId, RigidBody* inpOobbPiece, std::string inpOrigGroupId, std::vector <TriUV> inpTriList) :
-					sourcePhysicalItemId(inPhysicalItemId), origPieceAction(inpOrigPieceAction), newGroupId(inpNewGroupId), oobbPiece(inpOobbPiece), origGroupId(inpOrigGroupId), triList(inpTriList) {}
+				AddParams(unsigned long long inPhysicalItemId, std::string inpOrigPieceAction, std::string inpNewGroupId, RigidBody* inpOobbPiece, GraphicsModel* inpPieceModel, std::string inpOrigGroupId, std::vector <TriUV> inpTriList) :
+					sourcePhysicalItemId(inPhysicalItemId), origPieceAction(inpOrigPieceAction), newGroupId(inpNewGroupId), oobbPiece(inpOobbPiece), pieceModel(inpPieceModel), origGroupId(inpOrigGroupId), triList(inpTriList) { }
 			};
 			std::vector<AddParams> deferredAdds;
 

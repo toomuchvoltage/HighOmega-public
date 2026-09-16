@@ -291,8 +291,10 @@ namespace HIGHOMEGA
 			}
 			~SemaphoreClass();
 		};
+		class KHR_RT::RTScene;
 		class CommandBuffer
 		{
+			friend class KHR_RT::RTScene;
 			friend class ImageClass;
 		protected:
 			static ThreadLocalCache <VkCommandPool> cmdPools[QUEUE_TYPE::MAX_QUEUES];
@@ -1238,6 +1240,7 @@ namespace HIGHOMEGA
 				void Remove(GeometryClass& inpGeom);
 				void RemoveAll(unsigned long long inpId);
 				void DeleteRTResources();
+				static void CreateOrUpdateRTResources(RTScene* optionalScene, InstanceClass* instancePtr, std::vector<GeometryClass*>& geomToCreateOrUpdate);
 				unsigned long long rtSceneID(std::function<void(unsigned int, BufferClass*, BufferClass*, bool)>& rtCopyTransforms);
 			};
 			class RTTracelet : public CommandBuffer

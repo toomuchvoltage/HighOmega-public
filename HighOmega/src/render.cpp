@@ -35,7 +35,6 @@ ScreenSizeClass HIGHOMEGA::RENDER::ScreenSize;
 std::unordered_map <std::string, HIGHOMEGA::CacheItem<ImageClass>> HIGHOMEGA::RENDER::TextureCache;
 ImageClass *BlueNoiseHolderClass::blueNoise = nullptr;
 unsigned int BlueNoiseHolderClass::blueNoiseClaims = 0;
-std::function<bool(const MeshMaterial& curMat)> HIGHOMEGA::RENDER::GroupedSDFBVHSubmission::defaultFilterFunction;
 
 void HIGHOMEGA::RENDER::PASSES::GetCubeFaceLookUp(unsigned int faceIdx, vec3& look, vec3& up)
 {
@@ -827,7 +826,6 @@ unsigned int HIGHOMEGA::RENDER::GraphicsModel::TessellateWorkGroup()
 void HIGHOMEGA::RENDER::GraphicsModel::UpdateSDFs(std::vector<GraphicsModel *>& updateItems, bool forceRefresh, std::vector<std::string> cacheNames)
 {
 	if (RTInstance::Enabled()) return;
-	if (!GroupedSDFBVHSubmission::defaultFilterFunction) return; // Too early. Before even main game.
 
 	std::vector<ComputeSubmission*> csSet;
 	std::vector<ShaderResourceSet *> srsSet;
@@ -2565,6 +2563,12 @@ HIGHOMEGA::RENDER::GroupedRenderSubmission::~GroupedRenderSubmission()
 			delete SceneData;
 			SceneData = nullptr;
 		}
+}
+
+bool HIGHOMEGA::RENDER::GroupedRenderSubmission::defaultFilterFunction(const MeshMaterial& curMat)
+{
+	if (curMat.postProcess) return false;
+	return true;
 }
 
 void HIGHOMEGA::RENDER::GroupedRenderSubmission::AddNotifySubmission(GraphicsModel& inpModel, std::function<bool(const MeshMaterial& curMat)> inpFilterFunction)
