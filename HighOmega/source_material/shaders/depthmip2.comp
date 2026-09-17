@@ -32,12 +32,33 @@ layout (binding = 1, r32f) coherent uniform writeonly image2D LODMinZChain[6];
 layout (binding = 2, r32f) uniform readonly image2D LOD64MaxZ;
 layout (binding = 3, r32f) coherent uniform writeonly image2D LODMaxZChain[6];
 
-shared float cachedMinValues64[64][64], cachedMaxValues64[64][64];
-shared float cachedMinValues32[32][32], cachedMaxValues32[32][32];
-shared float cachedMinValues16[16][16], cachedMaxValues16[16][16];
-shared float cachedMinValues8[8][8], cachedMaxValues8[8][8];
-shared float cachedMinValues4[4][4], cachedMaxValues4[4][4];
-shared float cachedMinValues2[2][2], cachedMaxValues2[2][2];
+shared float cachedMinValues[64][64], cachedMaxValues[64][64];
+
+float computeCachedMinValue(uint readStride, uvec2 readCoord, uvec2 writeCoord)
+{
+	uint writeStride = readStride * 2;
+	uvec2 readCoord00 = readCoord * readStride;
+	uvec2 readCoord01 = uvec2 (readCoord.x, readCoord.y + 1) * readStride;
+	uvec2 readCoord10 = uvec2 (readCoord.x + 1, readCoord.y) * readStride;
+	uvec2 readCoord11 = uvec2 (readCoord.x + 1, readCoord.y + 1) * readStride;
+	writeCoord *= writeStride;
+	cachedMinValues[writeCoord.x][writeCoord.y] = min (min (cachedMinValues[readCoord00.x][readCoord00.y], cachedMinValues[readCoord10.x][readCoord10.y]), 
+													   min (cachedMinValues[readCoord01.x][readCoord01.y], cachedMinValues[readCoord11.x][readCoord11.y]));
+	return cachedMinValues[writeCoord.x][writeCoord.y];
+}
+
+float computeCachedMaxValue(uint readStride, uvec2 readCoord, uvec2 writeCoord)
+{
+	uint writeStride = readStride * 2;
+	uvec2 readCoord00 = readCoord * readStride;
+	uvec2 readCoord01 = uvec2 (readCoord.x, readCoord.y + 1) * readStride;
+	uvec2 readCoord10 = uvec2 (readCoord.x + 1, readCoord.y) * readStride;
+	uvec2 readCoord11 = uvec2 (readCoord.x + 1, readCoord.y + 1) * readStride;
+	writeCoord *= writeStride;
+	cachedMaxValues[writeCoord.x][writeCoord.y] = max (max (cachedMaxValues[readCoord00.x][readCoord00.y], cachedMaxValues[readCoord10.x][readCoord10.y]), 
+													   max (cachedMaxValues[readCoord01.x][readCoord01.y], cachedMaxValues[readCoord11.x][readCoord11.y]));
+	return cachedMaxValues[writeCoord.x][writeCoord.y];
+}
 
 void main()
 {
@@ -45,8 +66,8 @@ void main()
 		for (int j = 0; j != 8; j++)
 		{
 			ivec2 cacheIndex = ivec2 (gl_GlobalInvocationID.xy * 8) + ivec2 (i, j);
-			cachedMinValues64[cacheIndex.x][cacheIndex.y] = imageLoad (LOD64MinZ, cacheIndex).x;
-			cachedMaxValues64[cacheIndex.x][cacheIndex.y] = imageLoad (LOD64MaxZ, cacheIndex).x;
+			cachedMinValues[cacheIndex.x][cacheIndex.y] = imageLoad (LOD64MinZ, cacheIndex).x;
+			cachedMaxValues[cacheIndex.x][cacheIndex.y] = imageLoad (LOD64MaxZ, cacheIndex).x;
 		}
 
 	memoryBarrier();
@@ -57,12 +78,8 @@ void main()
 		{
 			ivec2 readIndex = ivec2 (gl_GlobalInvocationID.xy * 8) + ivec2 (i, j) * 2;
 			ivec2 writeIndex = readIndex / 2;
-			cachedMinValues32[writeIndex.x][writeIndex.y] = min (min (cachedMinValues64[readIndex.x][readIndex.y], cachedMinValues64[readIndex.x + 1][readIndex.y]), 
-																 min (cachedMinValues64[readIndex.x][readIndex.y + 1], cachedMinValues64[readIndex.x + 1][readIndex.y + 1]));
-			cachedMaxValues32[writeIndex.x][writeIndex.y] = max (max (cachedMaxValues64[readIndex.x][readIndex.y], cachedMaxValues64[readIndex.x + 1][readIndex.y]), 
-																 max (cachedMaxValues64[readIndex.x][readIndex.y + 1], cachedMaxValues64[readIndex.x + 1][readIndex.y + 1]));
-			imageStore (LODMinZChain[0], writeIndex.xy, vec4(cachedMinValues32[writeIndex.x][writeIndex.y]));
-			imageStore (LODMaxZChain[0], writeIndex.xy, vec4(cachedMaxValues32[writeIndex.x][writeIndex.y]));
+			imageStore (LODMinZChain[0], writeIndex.xy, vec4(computeCachedMinValue (1, readIndex, writeIndex)));
+			imageStore (LODMaxZChain[0], writeIndex.xy, vec4(computeCachedMaxValue (1, readIndex, writeIndex)));
 		}
 
 	memoryBarrier();
@@ -73,24 +90,16 @@ void main()
 		{
 			ivec2 readIndex = ivec2 (gl_GlobalInvocationID.xy * 4) + ivec2 (i, j) * 2;
 			ivec2 writeIndex = readIndex / 2;
-			cachedMinValues16[writeIndex.x][writeIndex.y] = min (min (cachedMinValues32[readIndex.x][readIndex.y], cachedMinValues32[readIndex.x + 1][readIndex.y]), 
-																 min (cachedMinValues32[readIndex.x][readIndex.y + 1], cachedMinValues32[readIndex.x + 1][readIndex.y + 1]));
-			cachedMaxValues16[writeIndex.x][writeIndex.y] = max (max (cachedMaxValues32[readIndex.x][readIndex.y], cachedMaxValues32[readIndex.x + 1][readIndex.y]), 
-																 max (cachedMaxValues32[readIndex.x][readIndex.y + 1], cachedMaxValues32[readIndex.x + 1][readIndex.y + 1]));
-			imageStore (LODMinZChain[1], writeIndex.xy, vec4(cachedMinValues16[writeIndex.x][writeIndex.y]));
-			imageStore (LODMaxZChain[1], writeIndex.xy, vec4(cachedMaxValues16[writeIndex.x][writeIndex.y]));
+			imageStore (LODMinZChain[1], writeIndex.xy, vec4(computeCachedMinValue (2, readIndex, writeIndex)));
+			imageStore (LODMaxZChain[1], writeIndex.xy, vec4(computeCachedMaxValue (2, readIndex, writeIndex)));
 		}
 
 	memoryBarrier();
 	barrier();
 
 	ivec2 readIndex = ivec2 (gl_GlobalInvocationID.xy * 2);
-	cachedMinValues8[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = min (min (cachedMinValues16[readIndex.x][readIndex.y], cachedMinValues16[readIndex.x + 1][readIndex.y]), 
-																			  min (cachedMinValues16[readIndex.x][readIndex.y + 1], cachedMinValues16[readIndex.x + 1][readIndex.y + 1]));
-	cachedMaxValues8[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = max (max (cachedMaxValues16[readIndex.x][readIndex.y], cachedMaxValues16[readIndex.x + 1][readIndex.y]), 
-																			  max (cachedMaxValues16[readIndex.x][readIndex.y + 1], cachedMaxValues16[readIndex.x + 1][readIndex.y + 1]));
-	imageStore (LODMinZChain[2], ivec2 (gl_GlobalInvocationID.xy), vec4(cachedMinValues8[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
-	imageStore (LODMaxZChain[2], ivec2 (gl_GlobalInvocationID.xy), vec4(cachedMaxValues8[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
+	imageStore (LODMinZChain[2], ivec2 (gl_GlobalInvocationID.xy), vec4(computeCachedMinValue (4, readIndex, gl_GlobalInvocationID.xy)));
+	imageStore (LODMaxZChain[2], ivec2 (gl_GlobalInvocationID.xy), vec4(computeCachedMaxValue (4, readIndex, gl_GlobalInvocationID.xy)));
 
 	if ( gl_GlobalInvocationID.x >= 4 || gl_GlobalInvocationID.y >= 4 ) return;
 
@@ -98,12 +107,8 @@ void main()
 	barrier();
 
 	readIndex = ivec2 (gl_GlobalInvocationID.xy * 2);
-	cachedMinValues4[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = min (min (cachedMinValues8[readIndex.x][readIndex.y], cachedMinValues8[readIndex.x + 1][readIndex.y]), 
-																			  min (cachedMinValues8[readIndex.x][readIndex.y + 1], cachedMinValues8[readIndex.x + 1][readIndex.y + 1]));
-	cachedMaxValues4[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = max (max (cachedMaxValues8[readIndex.x][readIndex.y], cachedMaxValues8[readIndex.x + 1][readIndex.y]), 
-																			  max (cachedMaxValues8[readIndex.x][readIndex.y + 1], cachedMaxValues8[readIndex.x + 1][readIndex.y + 1]));
-	imageStore (LODMinZChain[3], ivec2 (gl_GlobalInvocationID.xy), vec4(cachedMinValues4[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
-	imageStore (LODMaxZChain[3], ivec2 (gl_GlobalInvocationID.xy), vec4(cachedMaxValues4[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
+	imageStore (LODMinZChain[3], ivec2 (gl_GlobalInvocationID.xy), vec4(computeCachedMinValue (8, readIndex, gl_GlobalInvocationID.xy)));
+	imageStore (LODMaxZChain[3], ivec2 (gl_GlobalInvocationID.xy), vec4(computeCachedMaxValue (8, readIndex, gl_GlobalInvocationID.xy)));
 
 	if ( gl_GlobalInvocationID.x >= 2 || gl_GlobalInvocationID.y >= 2 ) return;
 
@@ -111,18 +116,14 @@ void main()
 	barrier();
 
 	readIndex = ivec2 (gl_GlobalInvocationID.xy * 2);
-	cachedMinValues2[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = min (min (cachedMinValues4[readIndex.x][readIndex.y], cachedMinValues4[readIndex.x + 1][readIndex.y]), 
-																			  min (cachedMinValues4[readIndex.x][readIndex.y + 1], cachedMinValues4[readIndex.x + 1][readIndex.y + 1]));
-	cachedMaxValues2[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y] = max (max (cachedMaxValues4[readIndex.x][readIndex.y], cachedMaxValues4[readIndex.x + 1][readIndex.y]), 
-																			  max (cachedMaxValues4[readIndex.x][readIndex.y + 1], cachedMaxValues4[readIndex.x + 1][readIndex.y + 1]));
-	imageStore (LODMinZChain[4], ivec2 (gl_GlobalInvocationID.xy), vec4(cachedMinValues2[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
-	imageStore (LODMaxZChain[4], ivec2 (gl_GlobalInvocationID.xy), vec4(cachedMaxValues2[gl_GlobalInvocationID.x][gl_GlobalInvocationID.y]));
+	imageStore (LODMinZChain[4], ivec2 (gl_GlobalInvocationID.xy), vec4(computeCachedMinValue (16, readIndex, gl_GlobalInvocationID.xy)));
+	imageStore (LODMaxZChain[4], ivec2 (gl_GlobalInvocationID.xy), vec4(computeCachedMaxValue (16, readIndex, gl_GlobalInvocationID.xy)));
 
 	if ( gl_GlobalInvocationID.xy != uvec2(0) ) return;
 
 	memoryBarrier();
 	barrier();
 
-	imageStore (LODMinZChain[5], ivec2(0), vec4(min (min (cachedMinValues2[0][0], cachedMinValues2[1][0]), min (cachedMinValues2[0][1], cachedMinValues2[1][1]))));
-	imageStore (LODMaxZChain[5], ivec2(0), vec4(max (max (cachedMaxValues2[0][0], cachedMaxValues2[1][0]), max (cachedMaxValues2[0][1], cachedMaxValues2[1][1]))));
+	imageStore (LODMinZChain[5], ivec2 (0), vec4(computeCachedMinValue (32, uvec2(0), uvec2(0))));
+	imageStore (LODMaxZChain[5], ivec2 (0), vec4(computeCachedMaxValue (32, uvec2(0), uvec2(0))));
 }
