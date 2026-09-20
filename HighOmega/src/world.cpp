@@ -1252,18 +1252,21 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::CutOutThread(PhysicalItemClass* physic
 		physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string("change"), groupId, nullptr, nullptr, groupId, stuckToMapTris);
 	}
 
-	std::vector<GeometryClass*> buildGeom;
-	for (AddParams& curAddParam : physicalItemsCollection->deferredAdds)
+	if (RTInstance::Enabled())
 	{
-		if (!curAddParam.pieceModel) continue;
-		for (std::pair<const MeshMaterial, std::list<GeometryClass>>& curMatGeoms : curAddParam.pieceModel->MaterialGeomMap)
+		std::vector<GeometryClass*> buildGeom;
+		for (AddParams& curAddParam : physicalItemsCollection->deferredAdds)
 		{
-			if (!GroupedTraceSubmission::defaultFilterFunction(curMatGeoms.first)) continue;
-			for (GeometryClass& curGeom : curMatGeoms.second)
-				buildGeom.push_back(&curGeom);
+			if (!curAddParam.pieceModel) continue;
+			for (std::pair<const MeshMaterial, std::list<GeometryClass>>& curMatGeoms : curAddParam.pieceModel->MaterialGeomMap)
+			{
+				if (!GroupedTraceSubmission::defaultFilterFunction(curMatGeoms.first)) continue;
+				for (GeometryClass& curGeom : curMatGeoms.second)
+					buildGeom.push_back(&curGeom);
+			}
 		}
+		RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
 	}
-	RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
 
 	physicalItemsCollection->booleanOpThreadFinished = true;
 }
@@ -1476,18 +1479,21 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::ShatterThread(PhysicalItemClass* physi
 	}
 	physicalItemsCollection->deferredAdds.emplace_back(physicalItemId, std::string("remove"), groupId, nullptr, nullptr, groupId, std::vector<TriUV>());
 
-	std::vector<GeometryClass*> buildGeom;
-	for (AddParams& curAddParam : physicalItemsCollection->deferredAdds)
+	if (RTInstance::Enabled())
 	{
-		if (!curAddParam.pieceModel) continue;
-		for (std::pair<const MeshMaterial, std::list<GeometryClass>>& curMatGeoms : curAddParam.pieceModel->MaterialGeomMap)
+		std::vector<GeometryClass*> buildGeom;
+		for (AddParams& curAddParam : physicalItemsCollection->deferredAdds)
 		{
-			if (!GroupedTraceSubmission::defaultFilterFunction(curMatGeoms.first)) continue;
-			for (GeometryClass& curGeom : curMatGeoms.second)
-				buildGeom.push_back(&curGeom);
+			if (!curAddParam.pieceModel) continue;
+			for (std::pair<const MeshMaterial, std::list<GeometryClass>>& curMatGeoms : curAddParam.pieceModel->MaterialGeomMap)
+			{
+				if (!GroupedTraceSubmission::defaultFilterFunction(curMatGeoms.first)) continue;
+				for (GeometryClass& curGeom : curMatGeoms.second)
+					buildGeom.push_back(&curGeom);
+			}
 		}
+		RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
 	}
-	RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
 
 	physicalItemsCollection->booleanOpThreadFinished = true;
 }
@@ -2494,7 +2500,10 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 						{
 							if (!GroupedTraceSubmission::defaultFilterFunction(curMatGeoms.first)) continue;
 							for (GeometryClass& curGeom : curMatGeoms.second)
+							{
+								if (curGeom.getRTGeom().IsCreated()) continue;
 								buildGeom.push_back(&curGeom);
+							}
 						}
 					}
 				RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
@@ -3324,19 +3333,6 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::AddEmitter(ParticleEmitter& inpEmitt
 
 	inpEmitter.Populate();
 
-	ComputeSubmission *integrateRef;
-	if (inpEmitter.requiresScene) // This better be happening on the main rendering thread...
-	{
-		if (!integrateAgainstSceneSubmission) integrateAgainstSceneSubmission = new ComputeSubmission;
-		integrateRef = integrateAgainstSceneSubmission;
-	}
-	else
-	{
-		if (!integrateSubmission) integrateSubmission = new ComputeSubmission;
-		integrateRef = integrateSubmission;
-	}
-	if (!transformCollectionSubmission) transformCollectionSubmission = new ComputeSubmission;
-
 	inpEmitter.particlesBuf = new BufferClass(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SSBO, Instance, inpEmitter.particles.data(), (unsigned int)(inpEmitter.particles.size() * sizeof(ParticleItem)));
 	inpEmitter.integrateParamsBuf = new BufferClass(MEMORY_HOST_VISIBLE, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SSBO, Instance, &inpEmitter.integrateParams, (unsigned int)sizeof(inpEmitter.integrateParams));
 
@@ -3652,11 +3648,26 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Update(float elapseTime, minMaxReduc
 {
 	if (sdfBvhSubmission || rtSubmission)
 	{
-		unsigned long long curSceneID = RTInstance::Enabled() ? rtSubmission->SceneID() : sdfBvhSubmission->SceneID();
-		if (sceneID != curSceneID)
+		bool foundSceneInteractor = false;
+		for (std::pair<const unsigned long long, std::vector<ParticleEmitter>>& curEmittersIdPair : allEmitters)
 		{
-			sceneID = curSceneID;
-			rerecordSubmission = true;
+			for (ParticleEmitter& curEmitter : curEmittersIdPair.second)
+				if (curEmitter.requiresScene)
+				{
+					foundSceneInteractor = true;
+					break;
+				}
+			if (foundSceneInteractor) break;
+		}
+
+		if (foundSceneInteractor)
+		{
+			unsigned long long curSceneID = RTInstance::Enabled() ? rtSubmission->SceneID() : sdfBvhSubmission->SceneID();
+			if (sceneID != curSceneID)
+			{
+				sceneID = curSceneID;
+				rerecordSubmission = true;
+			}
 		}
 
 		if (sceneInteractingEmitters.size() > 0)
@@ -3700,40 +3711,38 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Update(float elapseTime, minMaxReduc
 					maxVertCount = max(maxVertCount, curEmitter.sourceGeom[i]->getVertCount());
 			}
 
-		if (integrateSubmission) delete integrateSubmission;
 		if (integrateShader) delete integrateShader;
-		if (integrateAgainstSceneSubmission) delete integrateAgainstSceneSubmission;
 		if (integrateAgainstSceneShader) delete integrateAgainstSceneShader;
-		if (transformCollectionSubmission) delete transformCollectionSubmission;
 		if (transformCollectionShader) delete transformCollectionShader;
-		integrateSubmission = nullptr;
 		integrateShader = nullptr;
-		integrateAgainstSceneSubmission = nullptr;
 		integrateAgainstSceneShader = nullptr;
-		transformCollectionSubmission = nullptr;
 		transformCollectionShader = nullptr;
 
 		if (allParticleBufs.size() > 0)
 		{
 			if (allNonSceneInteractingParticleBufs.size() > 0)
 			{
-				integrateSubmission = new ComputeSubmission;
+				if (!integrateSubmission) integrateSubmission = new ComputeSubmission;
 				integrateShader = new ShaderResourceSet;
 				integrateShader->AddResource(RESOURCE_SSBO, COMPUTE, 0, allNonSceneInteractingParticleBufs, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY); // Technically this is produced here, but we haven't run into issues not depending on it in transform
 				integrateShader->AddResource(RESOURCE_SSBO, COMPUTE, 1, allNonSceneInteractingIntegrateParams, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
 				integrateShader->Create("shaders/integrateParticles.comp.spv", "main");
 				integrateSubmission->MakeDispatch(Instance, "nonSceneInteractingParticleIntegrateDispatch", *integrateShader, (unsigned int)ceil((double)maxNonSceneInteractingParticles / (double)WorkGroupIntegrateX()), (unsigned int)allNonSceneInteractingIntegrateParams.size(), 1);
 			}
+			else
+			{
+				if (integrateSubmission) delete integrateSubmission;
+				integrateSubmission = nullptr;
+			}
 
 			if (allSceneInteractingParticleBufs.size() > 0 && (sdfBvhSubmission || rtSubmission))
 			{
-				integrateAgainstSceneSubmission = new ComputeSubmission;
+				if (!integrateAgainstSceneSubmission) integrateAgainstSceneSubmission = new ComputeSubmission;
 				integrateAgainstSceneShader = new ShaderResourceSet;
 				integrateAgainstSceneShader->AddResource(RESOURCE_SSBO, COMPUTE, 0, allSceneInteractingParticleBufs, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY); // Technically this is produced here, but we haven't run into issues not depending on it in transform
 				integrateAgainstSceneShader->AddResource(RESOURCE_SSBO, COMPUTE, 1, allSceneInteractingIntegrateParams, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
 				if (!RTInstance::Enabled())
 				{
-					sdfBvhSubmission->SceneID();
 					integrateAgainstSceneShader->AddResource(RESOURCE_SSBO, COMPUTE, 2, 0, sdfBvhSubmission->invMatBuf, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
 					integrateAgainstSceneShader->AddResource(RESOURCE_SSBO, COMPUTE, 2, 1, sdfBvhSubmission->leavesBuf, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
 					integrateAgainstSceneShader->AddResource(RESOURCE_SSBO, COMPUTE, 2, 2, sdfBvhSubmission->cwNodesBuf, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
@@ -3741,7 +3750,6 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Update(float elapseTime, minMaxReduc
 				}
 				else
 				{
-					rtSubmission->SceneID();
 					integrateAgainstSceneShader->AddResource(RESOURCE_RT_ACCEL_STRUCT, COMPUTE, 2, 0, rtSubmission->rtScene);
 					integrateAgainstSceneShader->AddResource(RESOURCE_SAMPLER, COMPUTE, 3, GroupedRenderSubmission::SceneData->uniqueSamplersArray, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
 					integrateAgainstSceneShader->AddResource(RESOURCE_SSBO, COMPUTE, 4, 0, *GroupedRenderSubmission::SceneData->instancePropertiesBuffer, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
@@ -3753,6 +3761,11 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Update(float elapseTime, minMaxReduc
 				integrateAgainstSceneShader->Create(RTInstance::Enabled() ? "shaders/integrateParticlesAgainstSceneRT.comp.spv" : "shaders/integrateParticlesAgainstScene.comp.spv", "main");
 				integrateAgainstSceneSubmission->MakeDispatch(Instance, "sceneInteractingParticleIntegrateDispatch", *integrateAgainstSceneShader, (unsigned int)ceil((double)maxSceneInteractingParticles / (double)WorkGroupIntegrateX()), (unsigned int)allSceneInteractingIntegrateParams.size(), 1);
 			}
+			else
+			{
+				if (integrateAgainstSceneSubmission) delete integrateAgainstSceneSubmission;
+				integrateAgainstSceneSubmission = nullptr;
+			}
 
 			transformCollectionSubmission = new ComputeSubmission;
 			transformCollectionShader = new ShaderResourceSet;
@@ -3763,6 +3776,15 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Update(float elapseTime, minMaxReduc
 			transformCollectionShader->AddResource(RESOURCE_SSBO, COMPUTE, 2, allTransformParams, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
 			transformCollectionShader->Create("shaders/transformParticles.comp.spv", "main");
 			transformCollectionSubmission->MakeDispatch(Instance, "particleTransformDispatch", *transformCollectionShader, (unsigned int)ceil((double)maxVertCount / (double)WorkGroupTransformX()), (unsigned int)ceil((double)maxParticleCount / (double)WorkGroupTransformY()), (unsigned int)allParticleBufs.size());
+		}
+		else
+		{
+			if (integrateSubmission) delete integrateSubmission;
+			if (integrateAgainstSceneSubmission) delete integrateAgainstSceneSubmission;
+			if (transformCollectionSubmission) delete transformCollectionSubmission;
+			integrateSubmission = nullptr;
+			integrateAgainstSceneSubmission = nullptr;
+			transformCollectionSubmission = nullptr;
 		}
 
 		rerecordSubmission = false;
@@ -4407,9 +4429,9 @@ HIGHOMEGA::WORLD::PipelineSetupReturn HIGHOMEGA::WORLD::DefaultPipelineSetupClas
 		MainFrustum.Update();
 		PostProcessTri.UpdateViewSpace(MainFrustum.eye, MainFrustum.look, MainFrustum.up, MainFrustum.screen_whr, MainFrustum.screen_fov);
 
+		particleSystem.Update(worldParams.GetFrameTime(), mainMinMaxReducer, &sdfBvhSubmission, &mainRTSubmission); // Strategically placed here as it'll be the first one to update TLAS after last present. Save for zoneStreaming.Update(), no one else can affect the TLAS after present and before this.
 		plasteredItemsCollection.Update(worldParams.GetFrameTime());
 		physicalItemsCollection.Update([&](vec3 & inEye, vec3 & bodyPos, float bodyRad) -> bool { return zoneStreaming.isInDrawRegion(inEye, bodyPos, bodyRad); }, player.physics.bodyPos, player.physics.GetStandingHeight(), particleSystem, mainMinMaxReducer, &sdfBvhSubmission, &mainRTSubmission, worldParams);
-		particleSystem.Update(worldParams.GetFrameTime(), mainMinMaxReducer, &sdfBvhSubmission, &mainRTSubmission);
 		guidedModelSystem.Update(worldParams.GetFrameTime());
 		mainMinMaxReducer.Process();
 
