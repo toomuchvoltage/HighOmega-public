@@ -936,11 +936,7 @@ void InstanceClass::Make(bool validationLayer, WindowClass &inpWindow, bool requ
 
 	deviceCreateInfo.enabledExtensionCount = (uint32_t)enabledDeviceExtensions.size();
 	deviceCreateInfo.ppEnabledExtensionNames = enabledDeviceExtensions.data();
-	if (validationLayer)
-	{
-		deviceCreateInfo.enabledLayerCount = validationLayerCount;
-		deviceCreateInfo.ppEnabledLayerNames = validationLayerNames;
-	}
+	deviceCreateInfo.enabledLayerCount = 0;
 
 	result = vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device);
 	if (result != VK_SUCCESS)
@@ -2436,20 +2432,20 @@ void HIGHOMEGA::GL::RasterletClass::RecordCommandBuffers(std::vector<PSO_DSL_DS_
 
 	if (inpMode == ON_SCREEN)
 	{
-		VkImageMemoryBarrier prePresentBarrier = {};
-		prePresentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		prePresentBarrier.pNext = VK_NULL_HANDLE;
-		prePresentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		prePresentBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-		prePresentBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		prePresentBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-		prePresentBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		prePresentBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		prePresentBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-		prePresentBarrier.image = *inpImg;
+		VkImageMemoryBarrier presentBarrier = {};
+		presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		presentBarrier.pNext = VK_NULL_HANDLE;
+		presentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		presentBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		presentBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		presentBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		presentBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		presentBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		presentBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		presentBarrier.image = *inpImg;
 
-		VkImageMemoryBarrier *pMemoryBarrier = &prePresentBarrier;
-		vkCmdPipelineBarrier(cmdBuffers[whichCmdBuf], VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &prePresentBarrier);
+		VkImageMemoryBarrier *pMemoryBarrier = &presentBarrier;
+		vkCmdPipelineBarrier(cmdBuffers[whichCmdBuf], VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &presentBarrier);
 	}
 
 	EndCommandBuffer(whichCmdBuf);
@@ -2470,17 +2466,17 @@ void RasterletClass::Draw(bool prepass)
 
 		ptrToInstance->acquireImageFence.Wait();
 
-		VkImageMemoryBarrier postPresentBarrier = {};
-		postPresentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		postPresentBarrier.pNext = VK_NULL_HANDLE;
-		postPresentBarrier.srcAccessMask = 0;
-		postPresentBarrier.dstAccessMask = 0;
-		postPresentBarrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-		postPresentBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-		postPresentBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		postPresentBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		postPresentBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-		postPresentBarrier.image = ptrToFrameBuffer->colorAttachments[ptrToFrameBuffer->currentSwapChainBuffer]->image;
+		VkImageMemoryBarrier acquireBarrier = {};
+		acquireBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		acquireBarrier.pNext = VK_NULL_HANDLE;
+		acquireBarrier.srcAccessMask = 0;
+		acquireBarrier.dstAccessMask = 0;
+		acquireBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		acquireBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		acquireBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		acquireBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		acquireBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		acquireBarrier.image = ptrToFrameBuffer->colorAttachments[ptrToFrameBuffer->currentSwapChainBuffer]->image;
 
 		BeginCommandBuffer(*ptrToInstance, CommandBufferCount(), CommandBufferCount() - 1);
 
@@ -2491,7 +2487,7 @@ void RasterletClass::Draw(bool prepass)
 			0,
 			0, nullptr,
 			0, nullptr,
-			1, &postPresentBarrier);
+			1, &acquireBarrier);
 
 		EndCommandBuffer(CommandBufferCount() - 1);
 
@@ -2858,7 +2854,7 @@ bool HIGHOMEGA::GL::GeometryClass::getBreakable()
 
 void BufferClass::RemovePast()
 {
-	if (haveBuffer) instanceRef->QueueFlush(queueType);
+	if (haveBuffer) instanceRef->GPUFlush();
 	semaphore.RemovePast();
 	if (haveSubAlloc) FreeMem (subAllocs, instanceRef->device);
 	if (haveBuffer) vkDestroyBuffer(instanceRef->device, buffer, nullptr);
@@ -3033,7 +3029,7 @@ HIGHOMEGA::GL::VertBufferOffsetLen HIGHOMEGA::GL::BufferClass::VertexBufferClass
 	giantVertBufferSharedMutex.lock();
 	if (!giantVertBuffer)
 	{
-		giantVertBuffer = new BufferClass(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_SRC | USAGE_DST | inpUsage, inpInstance, nullptr, HIGHOMEGA_ONE_GIANT_VERTBUFFER_SIZE);
+		giantVertBuffer = new BufferClass(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_CONCURRENT, USAGE_SRC | USAGE_DST | inpUsage, inpInstance, nullptr, HIGHOMEGA_ONE_GIANT_VERTBUFFER_SIZE);
 		giantVertBufferClaims = 1;
 	}
 	else
@@ -3823,9 +3819,9 @@ void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer(unsigned int which)
 				}
 				else if (curSem->signalValue > curSem->waitValue)
 				{
+					curSem->waitValue = curSem->signalValue;
 					waitValues.push_back(curSem->waitValue);
 					waitSems.push_back(curSem->semaphore);
-					curSem->waitValue = curSem->signalValue;
 				}
 				curSem->readyForWait = false;
 			}
@@ -3842,10 +3838,10 @@ void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer(unsigned int which)
 			}
 	if (ownSemaphores[which].haveSemaphore && ownSemaphores[which].readyForWait && ownSemaphores[which].signalValue > ownSemaphores[which].waitValue)
 	{
-		waitValues.push_back(ownSemaphores[which].waitValue);
-		waitSems.push_back(ownSemaphores[which].semaphore);
 		ownSemaphores[which].waitValue = ownSemaphores[which].signalValue;
 		ownSemaphores[which].readyForWait = false;
+		waitValues.push_back(ownSemaphores[which].waitValue);
+		waitSems.push_back(ownSemaphores[which].semaphore);
 	}
 
 	if (which < signal.size())
@@ -4312,12 +4308,6 @@ std::vector<ImageClass> HIGHOMEGA::GL::ImageClass::FromSwapChain(InstanceClass &
 	for (uint32_t i = 0; i < swapChainImageCount; i++)
 	{
 		images[i].image = tmpImages[i];
-
-		std::vector <VkImage *> imagesInFrontOfBarrier;
-		imagesInFrontOfBarrier.push_back(&images[i].image);
-
-		images[i].setImageLayout(images[0].setupStandAloneCmdBuffer.cmdBuffers[0], imagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, 0, 1);
-
 		images[i].CreateImageView(NONE, false, (FORMAT)0, _2D, 1, 0, 1, images[i].view, images[i].haveImageView);
 		images[i].semaphore.Semaphore(&inpInstance, true);
 		images[i].haveImageView = true;
@@ -5427,7 +5417,11 @@ HIGHOMEGA::GL::FramebufferClass::~FramebufferClass()
 
 void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::RemoveAccelStruct()
 {
-	if (hasAccelStruct && ptrToInstance && ptrToInstance->SupportsHWRT()) RTInstance::fpDestroyAccelerationStructureKHR(ptrToInstance->device, accelStruct, nullptr);
+	if (hasAccelStruct && ptrToInstance && ptrToInstance->SupportsHWRT())
+	{
+		ptrToInstance->GPUFlush();
+		RTInstance::fpDestroyAccelerationStructureKHR(ptrToInstance->device, accelStruct, nullptr);
+	}
 
 	hasAccelStruct = false;
 	reuseUpdateCmdBuffer = false;
@@ -5459,7 +5453,7 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::CreateAccelStruct(bool isBlas, VkAcce
 		createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
 		createInfo.size = sizeInfo.accelerationStructureSize;
 
-		accelStructBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT | USAGE_ACCEL_STRUCT_BUILDER_READ_ONLY, *ptrToInstance, nullptr, (unsigned int)createInfo.size);
+		accelStructBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_CONCURRENT, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT | USAGE_ACCEL_STRUCT_BUILDER_READ_ONLY, *ptrToInstance, nullptr, (unsigned int)createInfo.size);
 		createInfo.buffer = accelStructBuffer.buffer;
 
 		VkResult result = RTInstance::fpCreateAccelerationStructureKHR(Instance.device, &createInfo, nullptr, &accelStruct);
@@ -5470,7 +5464,7 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::CreateAccelStruct(bool isBlas, VkAcce
 
 		if ((unsigned int)sizeInfo.buildScratchSize > scratchBuffer.getSize())
 		{
-			scratchBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT | USAGE_SSBO | USAGE_ACCEL_STRUCT_BUILDER_READ_ONLY, *ptrToInstance, nullptr, (unsigned int)sizeInfo.buildScratchSize);
+			scratchBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_CONCURRENT, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT | USAGE_SSBO | USAGE_ACCEL_STRUCT_BUILDER_READ_ONLY, *ptrToInstance, nullptr, (unsigned int)sizeInfo.buildScratchSize);
 		}
 		VkBufferDeviceAddressInfo scratchBufferInfo{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
 		scratchBufferInfo.pNext = VK_NULL_HANDLE;
@@ -5510,7 +5504,7 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::CreateAccelStruct(bool isBlas, VkAcce
 		createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
 		createInfo.size = sizeInfo.accelerationStructureSize;
 
-		accelStructBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT, *ptrToInstance, nullptr, (unsigned int)createInfo.size);
+		accelStructBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_CONCURRENT, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT, *ptrToInstance, nullptr, (unsigned int)createInfo.size);
 		createInfo.buffer = accelStructBuffer.buffer;
 
 		VkResult result = RTInstance::fpCreateAccelerationStructureKHR(Instance.device, &createInfo, nullptr, &accelStruct);
@@ -5522,7 +5516,7 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::CreateAccelStruct(bool isBlas, VkAcce
 
 		if ((unsigned int)sizeInfo.buildScratchSize > scratchBuffer.getSize())
 		{
-			scratchBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT | USAGE_SSBO, *ptrToInstance, nullptr, (unsigned int)sizeInfo.buildScratchSize);
+			scratchBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_CONCURRENT, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT | USAGE_SSBO, *ptrToInstance, nullptr, (unsigned int)sizeInfo.buildScratchSize);
 		}
 		VkBufferDeviceAddressInfo scratchBufferInfo{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
 		scratchBufferInfo.buffer = scratchBuffer.buffer;
@@ -5564,7 +5558,7 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::UpdateAccelStruct(bool isBlas, VkAcce
 
 		if ((unsigned int)sizeInfo.buildScratchSize > scratchBuffer.getSize())
 		{
-			scratchBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT, *ptrToInstance, nullptr, (unsigned int)sizeInfo.buildScratchSize);
+			scratchBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_CONCURRENT, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT, *ptrToInstance, nullptr, (unsigned int)sizeInfo.buildScratchSize);
 		}
 		VkBufferDeviceAddressInfo scratchBufferInfo{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
 		scratchBufferInfo.buffer = scratchBuffer.buffer;
@@ -5604,7 +5598,7 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::UpdateAccelStruct(bool isBlas, VkAcce
 
 		if ((unsigned int)sizeInfo.buildScratchSize > scratchBuffer.getSize())
 		{
-			scratchBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_EXCLUSIVE, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT, *ptrToInstance, nullptr, (unsigned int)sizeInfo.buildScratchSize);
+			scratchBuffer.Buffer(MEMORY_DEVICE_LOCAL, GRAPHICS_QUEUE, QUEUE_CONCURRENT, USAGE_DEVICE_ADDRESS | USAGE_ACCEL_STRUCT, *ptrToInstance, nullptr, (unsigned int)sizeInfo.buildScratchSize);
 		}
 		VkBufferDeviceAddressInfo scratchBufferInfo{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
 		scratchBufferInfo.buffer = scratchBuffer.buffer;
@@ -5700,7 +5694,7 @@ void HIGHOMEGA::GL::KHR_RT::RTGeometry::SetGeom(BufferClass & vertBuffer, VkDevi
 	dirty = true;
 }
 
-void HIGHOMEGA::GL::KHR_RT::RTGeometry::CreateOrUpdate(blasBuildParams *inpParams, unsigned long long* updateHash)
+void HIGHOMEGA::GL::KHR_RT::RTGeometry::CreateOrUpdate(blasBuildParams *inpParams)
 {
 	if (!created)
 	{
@@ -5711,7 +5705,6 @@ void HIGHOMEGA::GL::KHR_RT::RTGeometry::CreateOrUpdate(blasBuildParams *inpParam
 	if (dirty && !immutable)
 	{
 		UpdateAccelStruct(true, &traceGeom, &traceGeomOffset, nullptr, 0u, inpParams);
-		if (updateHash) *updateHash ^= (unsigned long long)traceGeom.geometry.triangles.vertexData.deviceAddress;
 		dirty = false;
 	}
 }
@@ -5731,6 +5724,11 @@ void HIGHOMEGA::GL::KHR_RT::RTGeometry::SetMask(unsigned char inpMask)
 unsigned int HIGHOMEGA::GL::KHR_RT::RTGeometry::GetMask()
 {
 	return rayMask;
+}
+
+bool HIGHOMEGA::GL::KHR_RT::RTGeometry::IsCreated()
+{
+	return created;
 }
 
 HIGHOMEGA::GL::InstanceClass *HIGHOMEGA::GL::DescriptorSetLayout::ptrToInstance = nullptr;
@@ -6547,7 +6545,7 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateOrUpdateRTResources(RTScene* optional
 				rebuildRTGeoms.push_back(&curGeom->getRTGeom());
 			}
 			if (optionalScene) optionalScene->needUpdate = true;
-			curGeom->getRTGeom().CreateOrUpdate(&blBuildParams, &updateHash);
+			curGeom->getRTGeom().CreateOrUpdate(&blBuildParams);
 		}
 
 
@@ -6558,7 +6556,10 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateOrUpdateRTResources(RTScene* optional
 			if (!optionalScene->semaphore.haveSemaphore)
 				optionalScene->semaphore.Semaphore(instancePtr);
 
-			if (optionalScene->previousUpdateHash != updateHash || rebuildRTGeoms.size())
+			for (VkAccelerationStructureBuildGeometryInfoKHR& curBlasBuildInfo : blBuildParams.blasBuildInfos)
+				updateHash ^= (unsigned long long)curBlasBuildInfo.dstAccelerationStructure;
+
+			if (optionalScene->previousUpdateHash != updateHash || optionalScene->previousUpdateHash == 0ull)
 			{
 				optionalScene->BeginCommandBuffer(*instancePtr, 3u, 0u);
 
@@ -6571,18 +6572,15 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateOrUpdateRTResources(RTScene* optional
 
 			optionalScene->WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&optionalScene->semaphore}, 0);
 			optionalScene->SignalSemaphores(std::unordered_set<SemaphoreClass*>{&optionalScene->semaphore}, 0);
-			if (rebuildRTGeoms.size()) optionalScene->DoCPUSync(0);
-			else optionalScene->NoCPUSync(0);
+			optionalScene->NoCPUSync(0);
 			optionalScene->SubmitCommandBuffer(0);
 		}
 		else
 		{
-
 			if (rebuildRTGeoms.size())
 			{
 				CommandBuffer createBlases;
-				createBlases.BeginCommandBuffer(*instancePtr, 1u, 0u);
-
+				createBlases.BeginCommandBuffer(*instancePtr, 1u, 0u, COMPUTE_QUEUE);
 				RTInstance::fpCmdBuildAccelerationStructuresKHR(createBlases.cmdBuffers[0], (unsigned int)blBuildParams.blasBuildInfos.size(),
 					(const VkAccelerationStructureBuildGeometryInfoKHR*)blBuildParams.blasBuildInfos.data(),
 					(const VkAccelerationStructureBuildRangeInfoKHR* const*)blBuildParams.blasBuildRanges.data());
@@ -6614,6 +6612,7 @@ unsigned long long HIGHOMEGA::GL::KHR_RT::RTScene::rtSceneID(std::function<void(
 	{
 		if (sceneId != 0ull) RTAccelStruct::RemoveAccelStruct();
 		sceneId = threadSafeMersenneTwister64Bit();
+		previousUpdateHash = 0ull;
 
 		CreateInstanceData(instances);
 

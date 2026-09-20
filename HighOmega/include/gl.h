@@ -498,10 +498,11 @@ namespace HIGHOMEGA
 				RTGeometry();
 				~RTGeometry();
 				void SetGeom(BufferClass & vertBuffer, VkDeviceAddress giantVertBufferAddress, unsigned int triCount, unsigned int vertCount, unsigned int vertDataOffset, unsigned int indexDataOffset, unsigned int vertStride, bool isAlphaKeyed, bool inpImmutable, InstanceClass & inpInstance);
-				void CreateOrUpdate(blasBuildParams *inpParams = nullptr, unsigned long long* updateHash = nullptr);
+				void CreateOrUpdate(blasBuildParams *inpParams = nullptr);
 				void SetDirty();
 				void SetMask(unsigned char inpMask);
 				unsigned int GetMask();
+				bool IsCreated();
 			};
 		}
 		class ImageClearColor
