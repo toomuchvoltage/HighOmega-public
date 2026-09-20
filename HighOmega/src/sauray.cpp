@@ -594,9 +594,11 @@ void HIGHOMEGA::SAURAY::SaurayPipelineSetupClass::Run(bool threaded)
 			break;
 		}
 
-		if (DefaultPipelineSetup->mainRTSubmission.rtScene.allTraceItems.size() == 0 && mapGeom.size() > 0)
+		bool hasTraceGeom = true;
+		if (DefaultPipelineSetup->mainRTSubmission.rtScene.allTraceItems.size() == 0)
 		{
 			LOG() << "No geom to trace against...";
+			hasTraceGeom = false;
 		}
 		INSTRUMENTATION::FPSCounter::Start();
 		frameInstrument.Start();
@@ -626,12 +628,12 @@ void HIGHOMEGA::SAURAY::SaurayPipelineSetupClass::Run(bool threaded)
 		for (std::pair<const unsigned int, QueuedPlayer>& curPlayer : queuedPlayersRenderThread) {
 			SaurayProcessPlayer(curPlayer.first);
 		}
-		DefaultPipelineSetup->SaurayTrace.PrePass();
+		if (hasTraceGeom) DefaultPipelineSetup->SaurayTrace.PrePass();
 		for (std::pair<const unsigned int, QueuedPlayer>& curPlayer : queuedPlayersRenderThread) {
 			SaurayProcessPlayer(curPlayer.first);
 		}
 		queuedPlayersRenderThread.clear();
-		DefaultPipelineSetup->SaurayTrace.Render();
+		if (hasTraceGeom) DefaultPipelineSetup->SaurayTrace.Render();
 		if (sauray_debug_mode) DefaultPipelineSetup->SaurayDisplayTest.Render();
 		frameInstrument.End();
 		INSTRUMENTATION::FPSCounter::End();
