@@ -2506,7 +2506,21 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 							}
 						}
 					}
-				RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeom);
+				while (buildGeom.size())
+				{
+					std::vector<GeometryClass*> buildGeomSubset;
+					if (buildGeom.size() > 100) // Don't do more than a 100 at a time...
+					{
+						buildGeomSubset = std::vector<GeometryClass*>(buildGeom.begin(), buildGeom.begin() + 100);
+						buildGeom.erase(buildGeom.begin(), buildGeom.begin() + 100);
+					}
+					else
+					{
+						buildGeomSubset = buildGeom;
+						buildGeom.clear();
+					}
+					RTScene::CreateOrUpdateRTResources(nullptr, &Instance, buildGeomSubset);
+				}
 			}
 			else
 				zoneStreamingPtr->physicalItemLoaders[threadId].UpdateSDFs(zoneStreamingPtr->physicalItemLoaders);
