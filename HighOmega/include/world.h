@@ -596,8 +596,9 @@ namespace HIGHOMEGA
 			void TransferCutOutBulletHoles(unsigned long long srcPhysicalItemId, unsigned long long dstPhysicalItemId, std::vector<TriUV>& dstTriList);
 			void CacheBulletEmittersHoles(ParticleSystemClass& particleSystem, minMaxReductionClass& inpMinMaxReducer, GroupedSDFBVHSubmission* sdfBvhSubmission, GroupedTraceSubmission* rtSubmission);
 			void ProcessFireLines(ParticleSystemClass& particleSystem, minMaxReductionClass& inpMinMaxReducer, GroupedSDFBVHSubmission* sdfBvhSubmission, GroupedTraceSubmission* rtSubmission);
-			void Combine(std::vector <PhysicalItemClass>& cameraRailClasses, std::vector<GroupedRenderSubmission*>& submissionList, std::function<void(GroupedRenderSubmission*, GraphicsModelInstance*)> inpPerSubmissionCall, bool forceAddToWorld = false);
-			void UpdateSDFs(std::vector <PhysicalItemClass>& cameraRailClasses);
+			void Combine(std::vector <PhysicalItemClass>& physicalItemClasses, std::vector<GroupedRenderSubmission*>& submissionList, std::function<void(GroupedRenderSubmission*, GraphicsModelInstance*)> inpPerSubmissionCall, bool forceAddToWorld = false);
+			void UpdateSDFs(std::vector <PhysicalItemClass>& physicalItemClasses);
+			void UpdateSDFs();
 			void AddNewItemsToWorld(bool threaded = true);
 			void getVisibleMinMax(vec3& outMin, vec3& outMax);
 			void ClearContent();
