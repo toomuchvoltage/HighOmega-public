@@ -22,7 +22,7 @@
 
 #pragma once
 
-#define HIGHOMEGA_VERSION 3.022030
+#define HIGHOMEGA_VERSION 3.022040
 
 #include <thread>
 #include <unordered_map>

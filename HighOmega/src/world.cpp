@@ -1702,29 +1702,7 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::Update(std::function <bool(vec3&, vec3
 	buildingModels.reserve(allItems.size());
 	rigidModels.reserve(allItems.size());
 
-	if (!RTInstance::Enabled())
-	{
-		for (std::pair<const unsigned long long, RigidBodyItem>& curItem : allItems)
-		{
-			if (curItem.second.modelRef && !curItem.second.modelRef->sdf)
-			{
-				if (curItem.second.meshName != "")
-				{
-					buildingModels.push_back(curItem.second.modelRef);
-					buildingCacheNames.push_back(curItem.second.zoneLocation + curItem.second.meshName + ".matdf");
-				}
-				else
-					rigidModels.push_back(curItem.second.modelRef);
-			}
-			else if (curItem.second.meshModelRef && !curItem.second.meshModelRef->model->sdf && std::find(rigidModels.begin(), rigidModels.end(), curItem.second.meshModelRef->model) == rigidModels.end())
-			{
-				rigidModels.push_back(curItem.second.meshModelRef->model);
-			}
-		}
-		if (rigidModels.size() > 0) GraphicsModel::UpdateSDFs(rigidModels); // SDF leaves for rigid bodies...
-		if (buildingModels.size() > 0) GraphicsModel::UpdateSDFs(buildingModels, false, buildingCacheNames); // SDF leaves for buildings...
-	}
-
+	UpdateSDFs();
 	AddNewItemsToWorld(true);
 
 	animatedMeshCollection.Process(worldParams.GetFrameTime());
@@ -2234,6 +2212,35 @@ void HIGHOMEGA::WORLD::PhysicalItemClass::UpdateSDFs(std::vector<PhysicalItemCla
 		if (rigidModels.size() > 0) GraphicsModel::UpdateSDFs(rigidModels); // SDF leaves for rigid bodies...
 		if (buildingModels.size() > 0) GraphicsModel::UpdateSDFs(buildingModels, false, buildingCacheNames); // SDF leaves for buildings...
 	}
+}
+
+void HIGHOMEGA::WORLD::PhysicalItemClass::UpdateSDFs()
+{
+	if (RTInstance::Enabled()) return;
+	std::vector<GraphicsModel*> buildingModels, rigidModels;
+	std::vector<std::string> buildingCacheNames;
+	buildingCacheNames.reserve(allItems.size());
+	buildingModels.reserve(allItems.size());
+	rigidModels.reserve(allItems.size());
+	for (std::pair<const unsigned long long, RigidBodyItem>& curItem : allItems)
+	{
+		if (curItem.second.modelRef && !curItem.second.modelRef->sdf)
+		{
+			if (curItem.second.meshName != "")
+			{
+				buildingModels.push_back(curItem.second.modelRef);
+				buildingCacheNames.push_back(curItem.second.zoneLocation + curItem.second.meshName + ".matdf");
+			}
+			else
+				rigidModels.push_back(curItem.second.modelRef);
+		}
+		else if (curItem.second.meshModelRef && !curItem.second.meshModelRef->model->sdf && std::find(rigidModels.begin(), rigidModels.end(), curItem.second.meshModelRef->model) == rigidModels.end())
+		{
+			rigidModels.push_back(curItem.second.meshModelRef->model);
+		}
+	}
+	if (rigidModels.size() > 0) GraphicsModel::UpdateSDFs(rigidModels); // SDF leaves for rigid bodies...
+	if (buildingModels.size() > 0) GraphicsModel::UpdateSDFs(buildingModels, false, buildingCacheNames); // SDF leaves for buildings...
 }
 
 void HIGHOMEGA::WORLD::PhysicalItemClass::AddNewItemsToWorld(bool threaded)
@@ -3773,6 +3780,7 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Update(float elapseTime, minMaxReduc
 					integrateAgainstSceneShader->AddResource(RESOURCE_SSBO, COMPUTE, 4, 2, *GroupedRenderSubmission::SceneData->transformBuffer, ShaderResource::SHADER_RESOURCE_USAGE::USAGE_NOT_A_DEPENDENCY);
 				}
 				integrateAgainstSceneShader->Create(RTInstance::Enabled() ? "shaders/integrateParticlesAgainstSceneRT.comp.spv" : "shaders/integrateParticlesAgainstScene.comp.spv", "main");
+				integrateAgainstSceneSubmission->RemoveDispatch(Instance, "sceneInteractingParticleIntegrateDispatch");
 				integrateAgainstSceneSubmission->MakeDispatch(Instance, "sceneInteractingParticleIntegrateDispatch", *integrateAgainstSceneShader, (unsigned int)ceil((double)maxSceneInteractingParticles / (double)WorkGroupIntegrateX()), (unsigned int)allSceneInteractingIntegrateParams.size(), 1);
 			}
 			else
@@ -4540,6 +4548,8 @@ HIGHOMEGA::WORLD::PipelineSetupReturn HIGHOMEGA::WORLD::DefaultPipelineSetupClas
 						RTInstance::Disable();
 						guidedModelSystem.UpdateSDFs();
 						plasteredItemsCollection.UpdateSDFs();
+						particleSystem.UpdateSDFs();
+						physicalItemsCollection.UpdateSDFs();
 					},
 					[&]() {
 						zoneStreaming.waitOnZoneProduction();
