@@ -1379,7 +1379,8 @@ void HIGHOMEGA::GL::InstanceClass::QueueFlush(QUEUE_TYPE queueToFlush)
     {
         if (result == VK_ERROR_OUT_OF_HOST_MEMORY) FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: out of host memory");
         else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: out of device memory");
-        else FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: device lost");
+		else if (result == VK_ERROR_UNKNOWN) FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: unknown error");
+		else FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: device lost");
     }
 }
 
@@ -1394,7 +1395,8 @@ void HIGHOMEGA::GL::InstanceClass::GPUFlush()
     {
         if (result == VK_ERROR_OUT_OF_HOST_MEMORY) FATAL_ERROR("Could not flush device: out of host memory");
         else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) FATAL_ERROR("Could not flush device: out of device memory");
-        else FATAL_ERROR("Could not flush device: device lost");
+		else if (result == VK_ERROR_UNKNOWN) FATAL_ERROR("Could not flush device: unknown error");
+		else FATAL_ERROR("Could not flush device: device lost");
     }
 }
 
@@ -2206,6 +2208,7 @@ void HIGHOMEGA::GL::FenceClass::Wait()
 	{
 		if (result == VK_ERROR_OUT_OF_HOST_MEMORY) FATAL_ERROR("Could not wait on fence: out of host memory");
 		else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) FATAL_ERROR("Could not wait on fence: out of device memory");
+		else if (result == VK_ERROR_UNKNOWN) FATAL_ERROR("Could not wait on fence: unknown error");
 		else FATAL_ERROR("Could not wait on fence: device lost");
 	}
 }
@@ -2253,7 +2256,7 @@ unsigned int HIGHOMEGA::GL::RasterletClass::IndirectDrawCounterSize()
 
 void HIGHOMEGA::GL::RasterletClass::ResetRasterlet()
 {
-	DestroyCommandBuffer();
+	drawCmdBuf.clear();
 	waitSems.clear();
 	waitOldSems.clear();
 	signalSems.clear();
@@ -2374,9 +2377,12 @@ void HIGHOMEGA::GL::RasterletClass::RecordCommandBuffers(std::vector<PSO_DSL_DS_
 {
 	renderPassBeginInfo.framebuffer = inpFrameBuffer;
 
-	BeginCommandBuffer(*ptrToInstance, numCmdBuf, whichCmdBuf);
+	if (!drawCmdBuf.size()) drawCmdBuf.resize(numCmdBuf);
+	VkCommandBuffer& curCmdBuf = drawCmdBuf[whichCmdBuf].cmdBuffer;
 
-	vkCmdBeginRenderPass(cmdBuffers[whichCmdBuf], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+	drawCmdBuf[whichCmdBuf].BeginCommandBuffer(*ptrToInstance);
+
+	vkCmdBeginRenderPass(curCmdBuf, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 	VkViewport viewport = {};
 	viewport.x = (float)inpDynamicFlags.viewport_x;
@@ -2385,14 +2391,14 @@ void HIGHOMEGA::GL::RasterletClass::RecordCommandBuffers(std::vector<PSO_DSL_DS_
 	viewport.width = (float)inpDynamicFlags.viewport_width;
 	viewport.minDepth = 0.0f;
 	viewport.maxDepth = 1.0f;
-	vkCmdSetViewport(cmdBuffers[whichCmdBuf], 0, 1, &viewport);
+	vkCmdSetViewport(curCmdBuf, 0, 1, &viewport);
 
 	VkRect2D scissor = {};
 	scissor.extent.width = inpDynamicFlags.viewport_width;
 	scissor.extent.height = inpDynamicFlags.viewport_height;
 	scissor.offset.x = inpDynamicFlags.viewport_x;
 	scissor.offset.y = inpDynamicFlags.viewport_y;
-	vkCmdSetScissor(cmdBuffers[whichCmdBuf], 0, 1, &scissor);
+	vkCmdSetScissor(curCmdBuf, 0, 1, &scissor);
 
 	RasterPipelineStateClass *PSOPtr = nullptr;
 
@@ -2400,8 +2406,8 @@ void HIGHOMEGA::GL::RasterletClass::RecordCommandBuffers(std::vector<PSO_DSL_DS_
 	if (PSO_DSL_DS_GeomInstPairings.size() > 0)
 	{
 		giantVertBufferSharedMutex.lock_shared();
-		vkCmdBindVertexBuffers(cmdBuffers[whichCmdBuf], PSO_DSL_DS_GeomInstPairings[0].geom->layoutCache.BindPoint, 1, &giantVertBuffer->buffer, offsets);
-		vkCmdBindIndexBuffer(cmdBuffers[whichCmdBuf], giantVertBuffer->buffer, (VkDeviceSize)0, VK_INDEX_TYPE_UINT32);
+		vkCmdBindVertexBuffers(curCmdBuf, PSO_DSL_DS_GeomInstPairings[0].geom->layoutCache.BindPoint, 1, &giantVertBuffer->buffer, offsets);
+		vkCmdBindIndexBuffer(curCmdBuf, giantVertBuffer->buffer, (VkDeviceSize)0, VK_INDEX_TYPE_UINT32);
 		giantVertBufferSharedMutex.unlock_shared();
 		RasterPipelineStateClass* lastPSOPtr = nullptr;
 		DescriptorSets* lastDSPtr = nullptr;
@@ -2410,25 +2416,25 @@ void HIGHOMEGA::GL::RasterletClass::RecordCommandBuffers(std::vector<PSO_DSL_DS_
 			RasterPipelineStateClass* psoToConsider = (mainPass ? curIndBounds.PSOMainPassPtr : curIndBounds.PSOPtr);
 			if (lastPSOPtr != psoToConsider)
 			{
-				vkCmdBindPipeline(cmdBuffers[whichCmdBuf], VK_PIPELINE_BIND_POINT_GRAPHICS, psoToConsider->pipeline);
+				vkCmdBindPipeline(curCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, psoToConsider->pipeline);
 				lastPSOPtr = psoToConsider;
 			}
 			if (lastDSPtr != curIndBounds.DSPtr)
 			{
-				vkCmdBindDescriptorSets(cmdBuffers[whichCmdBuf], VK_PIPELINE_BIND_POINT_GRAPHICS, psoToConsider->pipelineLayout, 0, (uint32_t)curIndBounds.DSPtr->descriptorSets.size(), curIndBounds.DSPtr->descriptorSets.data(), 0, VK_NULL_HANDLE);
+				vkCmdBindDescriptorSets(curCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, psoToConsider->pipelineLayout, 0, (uint32_t)curIndBounds.DSPtr->descriptorSets.size(), curIndBounds.DSPtr->descriptorSets.data(), 0, VK_NULL_HANDLE);
 				lastDSPtr = curIndBounds.DSPtr;
 			}
 			if (doesCulling)
-				Instance.fpCmdDrawIndexedIndirectCountKHR(cmdBuffers[whichCmdBuf], indirectDrawBuffer->buffer, (VkDeviceSize)curIndBounds.offset,
+				Instance.fpCmdDrawIndexedIndirectCountKHR(curCmdBuf, indirectDrawBuffer->buffer, (VkDeviceSize)curIndBounds.offset,
 					indirectDrawBuffer->buffer, (VkDeviceSize)(curIndBounds.offset - IndirectDrawCounterSize()),
 					curIndBounds.indDrawCount, (unsigned int)sizeof(VkDrawIndexedIndirectCommand));
 			else
-				vkCmdDrawIndexedIndirect(cmdBuffers[whichCmdBuf], indirectDrawBuffer->buffer, (VkDeviceSize)curIndBounds.offset,
+				vkCmdDrawIndexedIndirect(curCmdBuf, indirectDrawBuffer->buffer, (VkDeviceSize)curIndBounds.offset,
 					curIndBounds.indDrawCount, (unsigned int)sizeof(VkDrawIndexedIndirectCommand));
 		}
 	}
 
-	vkCmdEndRenderPass(cmdBuffers[whichCmdBuf]);
+	vkCmdEndRenderPass(curCmdBuf);
 
 	if (inpMode == ON_SCREEN)
 	{
@@ -2445,10 +2451,10 @@ void HIGHOMEGA::GL::RasterletClass::RecordCommandBuffers(std::vector<PSO_DSL_DS_
 		presentBarrier.image = *inpImg;
 
 		VkImageMemoryBarrier *pMemoryBarrier = &presentBarrier;
-		vkCmdPipelineBarrier(cmdBuffers[whichCmdBuf], VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &presentBarrier);
+		vkCmdPipelineBarrier(curCmdBuf, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &presentBarrier);
 	}
 
-	EndCommandBuffer(whichCmdBuf);
+	drawCmdBuf[whichCmdBuf].EndCommandBuffer();
 }
 
 void RasterletClass::Draw(bool prepass)
@@ -2460,6 +2466,8 @@ void RasterletClass::Draw(bool prepass)
 	if (ptrToFrameBuffer->mode == ON_SCREEN)
 	{
 		ptrToInstance->acquireImageFence.Reset();
+
+		CommandBuffer& curCmdBuf = drawCmdBuf[drawCmdBuf.size() - 1];
 
 		result = ptrToInstance->fpAcquireNextImageKHR(ptrToInstance->device, ptrToInstance->swapChain, UINT64_MAX, VK_NULL_HANDLE, ptrToInstance->acquireImageFence.fence, &ptrToFrameBuffer->currentSwapChainBuffer);
 		if (result != VK_SUCCESS) FATAL_ERROR("Problem acq. next image");
@@ -2478,10 +2486,10 @@ void RasterletClass::Draw(bool prepass)
 		acquireBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 		acquireBarrier.image = ptrToFrameBuffer->colorAttachments[ptrToFrameBuffer->currentSwapChainBuffer]->image;
 
-		BeginCommandBuffer(*ptrToInstance, CommandBufferCount(), CommandBufferCount() - 1);
+		curCmdBuf.BeginCommandBuffer(*ptrToInstance);
 
 		vkCmdPipelineBarrier(
-			cmdBuffers[CommandBufferCount() - 1],
+			curCmdBuf.cmdBuffer,
 			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 			0,
@@ -2489,9 +2497,9 @@ void RasterletClass::Draw(bool prepass)
 			0, nullptr,
 			1, &acquireBarrier);
 
-		EndCommandBuffer(CommandBufferCount() - 1);
+		curCmdBuf.EndCommandBuffer();
 
-		SubmitCommandBuffer(CommandBufferCount() - 1);
+		curCmdBuf.SubmitCommandBuffer();
 	}
 
 	unsigned int cmdBufferToSubmit;
@@ -2507,19 +2515,20 @@ void RasterletClass::Draw(bool prepass)
 		if (!doesCulling)
 			cmdBufferToSubmit = ptrToFrameBuffer->currentSwapChainBuffer;
 		else
-			cmdBufferToSubmit = (prepass ? 0 : (CommandBufferCount() - 1)/2) + ptrToFrameBuffer->currentSwapChainBuffer;
+			cmdBufferToSubmit = (prepass ? 0 : ((unsigned int)drawCmdBuf.size() - 1)/2) + ptrToFrameBuffer->currentSwapChainBuffer;
 	}
+	CommandBuffer& cmdBufToSubmit = drawCmdBuf[cmdBufferToSubmit];
 
-	WaitOnSemaphores(waitSems, cmdBufferToSubmit);
-	WaitOnOldSemaphores(waitOldSems, cmdBufferToSubmit);
+	cmdBufToSubmit.WaitOnSemaphores(waitSems);
+	cmdBufToSubmit.WaitOnOldSemaphores(waitOldSems);
 
 	std::unordered_set<SemaphoreClass*> signalSemsThisFrame = signalSems;
 	if (ptrToFrameBuffer->mode == ON_SCREEN) signalSemsThisFrame.insert(&ptrToFrameBuffer->colorAttachments[cmdBufferToSubmit]->semaphore);
-	SignalSemaphores(signalSemsThisFrame, cmdBufferToSubmit);
+	cmdBufToSubmit.SignalSemaphores(signalSemsThisFrame);
 
-	if (!doCPUSync) NoCPUSync(cmdBufferToSubmit);
+	if (!doCPUSync) cmdBufToSubmit.NoCPUSync();
 
-	SubmitCommandBuffer(cmdBufferToSubmit);
+	cmdBufToSubmit.SubmitCommandBuffer();
 
 	if (ptrToFrameBuffer->mode == ON_SCREEN)
 	{
@@ -2551,31 +2560,61 @@ void HIGHOMEGA::GL::ComputeletClass::Start(ComputePipelineStateClass & PSO, QUEU
 {
 	if (!instanceRef) return;
 
-	BeginCommandBuffer(*instanceRef, 1u, 0u, inQueueType);
+	cmdBuf.BeginCommandBuffer(*instanceRef, inQueueType);
 
-	vkCmdBindPipeline(cmdBuffers[0], VK_PIPELINE_BIND_POINT_COMPUTE, PSO.pipeline);
+	vkCmdBindPipeline(cmdBuf.cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, PSO.pipeline);
 }
 
 void HIGHOMEGA::GL::ComputeletClass::Dispatch(ComputePipelineStateClass & PSO, DescriptorSets & DS, int groupX, int groupY, int groupZ)
 {
 	if (!instanceRef) return;
 
-	vkCmdBindDescriptorSets(cmdBuffers[0], VK_PIPELINE_BIND_POINT_COMPUTE, PSO.pipelineLayout, 0, (uint32_t)DS.descriptorSets.size(), DS.descriptorSets.data(), 0, VK_NULL_HANDLE);
-	vkCmdDispatch(cmdBuffers[0], groupX, groupY, groupZ);
+	vkCmdBindDescriptorSets(cmdBuf.cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, PSO.pipelineLayout, 0, (uint32_t)DS.descriptorSets.size(), DS.descriptorSets.data(), 0, VK_NULL_HANDLE);
+	vkCmdDispatch(cmdBuf.cmdBuffer, groupX, groupY, groupZ);
+}
+
+void HIGHOMEGA::GL::ComputeletClass::WaitOnSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOn)
+{
+	cmdBuf.WaitOnSemaphores(inWaitOn);
+}
+
+void HIGHOMEGA::GL::ComputeletClass::WaitOnOldSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOnOld)
+{
+	cmdBuf.WaitOnOldSemaphores(inWaitOnOld);
+}
+
+void HIGHOMEGA::GL::ComputeletClass::SignalSemaphores(const std::unordered_set<SemaphoreClass*>& inSignal)
+{
+	cmdBuf.SignalSemaphores(inSignal);
+}
+
+void HIGHOMEGA::GL::ComputeletClass::EnableSafeResubmit()
+{
+	cmdBuf.EnableSafeResubmit();
+}
+
+void HIGHOMEGA::GL::ComputeletClass::NoCPUSync()
+{
+	cmdBuf.NoCPUSync();
+}
+
+void HIGHOMEGA::GL::ComputeletClass::DoCPUSync()
+{
+	cmdBuf.DoCPUSync();
 }
 
 void HIGHOMEGA::GL::ComputeletClass::End()
 {
 	if (!instanceRef) return;
 
-	EndCommandBuffer();
+	cmdBuf.EndCommandBuffer();
 }
 
 void HIGHOMEGA::GL::ComputeletClass::Submit()
 {
 	if (!instanceRef) return;
 
-	SubmitCommandBuffer();
+	cmdBuf.SubmitCommandBuffer();
 }
 
 GeometryClass::DataLayout::DataLayout()
@@ -2716,24 +2755,24 @@ void HIGHOMEGA::GL::GeometryClass::Download(std::vector<unsigned char>& outIndex
 
 	if (vertBuffer.cachedDownloadBuffer != vertexStagingBuffer.buffer || !downloadConstructed)
 	{
-		try { vertBuffer.BeginCommandBuffer(Instance, 4, 1); }
+		try { vertBuffer.downloadCmdBuf.BeginCommandBuffer(Instance); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for buffer creation"); }
 
 		giantVertBufferSharedMutex.lock_shared();
 		VkBufferCopy copyRegion = {};
 		copyRegion.srcOffset = getDataOffsetInGiantVertexBuffer() * sizeof(unsigned int);
 		copyRegion.size = totalDataSize;
-		vkCmdCopyBuffer(vertBuffer.cmdBuffers[1], giantVertBuffer->buffer, vertexStagingBuffer.buffer, 1, &copyRegion);
+		vkCmdCopyBuffer(vertBuffer.downloadCmdBuf.cmdBuffer, giantVertBuffer->buffer, vertexStagingBuffer.buffer, 1, &copyRegion);
 		giantVertBufferSharedMutex.unlock_shared();
 
-		try { vertBuffer.EndCommandBuffer(1); }
+		try { vertBuffer.downloadCmdBuf.EndCommandBuffer(); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not end setup cmd buffer for buffer creation"); }
 
 		downloadConstructed = true;
 		vertBuffer.cachedDownloadBuffer = vertexStagingBuffer.buffer;
 	}
 
-	try { vertBuffer.SubmitCommandBuffer(1); }
+	try { vertBuffer.downloadCmdBuf.SubmitCommandBuffer(); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not submit setup cmd buffer for buffer creation"); }
 
 	outIndexVertexData.resize(totalDataSize);
@@ -2756,23 +2795,23 @@ void HIGHOMEGA::GL::GeometryClass::Update(std::vector<unsigned char>& inpIndexVe
 
 	if (vertBuffer.cachedUploadBuffer != vertexStagingBuffer.buffer || !uploadConstructed)
 	{
-		try { vertBuffer.BeginCommandBuffer(Instance, 4, 0); }
+		try { vertBuffer.updateCmdBuf.BeginCommandBuffer(Instance); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for buffer creation"); }
 
 		giantVertBufferSharedMutex.lock_shared();
 		copyRegion.dstOffset = getDataOffsetInGiantVertexBuffer() * sizeof(unsigned int);
 		copyRegion.size = totalDataSize;
-		vkCmdCopyBuffer(vertBuffer.cmdBuffers[0], vertexStagingBuffer.buffer, giantVertBuffer->buffer, 1, &copyRegion);
+		vkCmdCopyBuffer(vertBuffer.updateCmdBuf.cmdBuffer, vertexStagingBuffer.buffer, giantVertBuffer->buffer, 1, &copyRegion);
 		giantVertBufferSharedMutex.unlock_shared();
 
-		try { vertBuffer.EndCommandBuffer(0); }
+		try { vertBuffer.updateCmdBuf.EndCommandBuffer(); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not end setup cmd buffer for buffer creation"); }
 
 		uploadConstructed = true;
 		vertBuffer.cachedUploadBuffer = vertexStagingBuffer.buffer;
 	}
 
-	try { vertBuffer.SubmitCommandBuffer(0); }
+	try { vertBuffer.updateCmdBuf.SubmitCommandBuffer(); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not submit setup cmd buffer for buffer creation"); }
 
 	RasterVertex* verts; unsigned int* indices;
@@ -2859,7 +2898,6 @@ void BufferClass::RemovePast()
 	if (haveSubAlloc) FreeMem (subAllocs, instanceRef->device);
 	if (haveBuffer) vkDestroyBuffer(instanceRef->device, buffer, nullptr);
 	cachedUploadBuffer = cachedDownloadBuffer = VK_NULL_HANDLE;
-	DestroyCommandBuffer();
 
 	if (usingGiantVertBuffer)
 	{
@@ -3079,19 +3117,19 @@ HIGHOMEGA::GL::VertBufferOffsetLen HIGHOMEGA::GL::BufferClass::VertexBufferClass
 
 	VkBufferCopy copyRegion = {};
 
-	try { BeginCommandBuffer(inpInstance, 4, 0); }
+	try { copyFromStagingCmdBuf.BeginCommandBuffer(inpInstance); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for buffer creation"); }
 
 	giantVertBufferSharedMutex.lock_shared();
 	copyRegion.size = totalDataSize;
 	copyRegion.dstOffset = (VkDeviceSize)insertedEntry.offset;
-	vkCmdCopyBuffer(cmdBuffers[0], vertexStagingBuffer.buffer, giantVertBuffer->buffer, 1, &copyRegion);
+	vkCmdCopyBuffer(copyFromStagingCmdBuf.cmdBuffer, vertexStagingBuffer.buffer, giantVertBuffer->buffer, 1, &copyRegion);
 	giantVertBufferSharedMutex.unlock_shared();
 
-	try { EndCommandBuffer(0); }
+	try { copyFromStagingCmdBuf.EndCommandBuffer(); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not end setup cmd buffer for buffer creation"); }
 
-	try { SubmitCommandBuffer(0); }
+	try { copyFromStagingCmdBuf.SubmitCommandBuffer(); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not submit setup cmd buffer for buffer creation"); }
 
 	return insertedEntry;
@@ -3106,15 +3144,15 @@ void HIGHOMEGA::GL::BufferClass::CopyToBuffer(InstanceClass& inpInstance, Buffer
 	{
 		VkBufferCopy copyRegion = {};
 
-		try { BeginCommandBuffer(inpInstance, 4, 2); }
+		try { copyCmdBuf.BeginCommandBuffer(inpInstance); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for buffer copy"); }
 
 		copyRegion.size = inpDataSize;
 		copyRegion.srcOffset = srcOffset;
 		copyRegion.dstOffset = dstOffset;
-		vkCmdCopyBuffer(cmdBuffers[2], buffer, dstBuf.buffer, 1, &copyRegion);
+		vkCmdCopyBuffer(copyCmdBuf.cmdBuffer, buffer, dstBuf.buffer, 1, &copyRegion);
 
-		try { EndCommandBuffer(2); }
+		try { copyCmdBuf.EndCommandBuffer(); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not end setup cmd buffer for buffer copy"); }
 
 		cachedCopyBuffer = dstBuf.buffer;
@@ -3124,10 +3162,10 @@ void HIGHOMEGA::GL::BufferClass::CopyToBuffer(InstanceClass& inpInstance, Buffer
 		copyCmdBufferConstructed = true;
 	}
 
-	WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{ &semaphore, &dstBuf.semaphore }, 2);
-	SignalSemaphores(std::unordered_set<SemaphoreClass*>{ &dstBuf.semaphore }, 2);
-	NoCPUSync(2);
-	try { SubmitCommandBuffer(2); }
+	copyCmdBuf.WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{ &semaphore, &dstBuf.semaphore });
+	copyCmdBuf.SignalSemaphores(std::unordered_set<SemaphoreClass*>{ &dstBuf.semaphore });
+	copyCmdBuf.NoCPUSync();
+	try { copyCmdBuf.SubmitCommandBuffer(); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not submit setup cmd buffer for buffer copy"); }
 }
 
@@ -3206,19 +3244,19 @@ void HIGHOMEGA::GL::BufferClass::Clear(unsigned int clearValue)
 {
 	if (!clearCmdBufConstructed || lastClearValue != clearValue)
 	{
-		try { BeginCommandBuffer(Instance, 4, 3); }
+		try { clearCmdBuf.BeginCommandBuffer(Instance); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for buffer value set"); }
 
-		vkCmdFillBuffer(cmdBuffers[3], buffer, (VkDeviceSize)0ull, VK_WHOLE_SIZE, clearValue);
+		vkCmdFillBuffer(clearCmdBuf.cmdBuffer, buffer, (VkDeviceSize)0ull, VK_WHOLE_SIZE, clearValue);
 
-		try { EndCommandBuffer(3); }
+		try { clearCmdBuf.EndCommandBuffer(); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not end setup cmd buffer for buffer value set"); }
 
 		lastClearValue = clearValue;
 		clearCmdBufConstructed = true;
 	}
 
-	try { SubmitCommandBuffer(3); }
+	try { clearCmdBuf.SubmitCommandBuffer(); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not submit setup cmd buffer for buffer value set"); }
 }
 
@@ -3653,8 +3691,8 @@ void HIGHOMEGA::GL::CommandBuffer::DestroyCommandBuffer()
 
 	if (haveSetupCmdBuffer)
 	{
-		ownSemaphores.clear();
-		vkFreeCommandBuffers(ptrToInstance->device, cmdPoolRef->elem, (uint32_t)cmdBuffers.size(), cmdBuffers.data());
+		ownSemaphore.RemovePast();
+		vkFreeCommandBuffers(ptrToInstance->device, cmdPoolRef->elem, 1, &cmdBuffer);
 		{std::lock_guard <std::mutex> lk(ptrToInstance->allQueues[queueType].mtx);
 		cmdPoolRef->elemCount--;
 		if (cmdPoolRef->elemCount == 0)
@@ -3662,14 +3700,13 @@ void HIGHOMEGA::GL::CommandBuffer::DestroyCommandBuffer()
 			vkDestroyCommandPool(ptrToInstance->device, cmdPoolRef->elem, nullptr);
 			cmdPools[queueType].dir.erase(cmdPoolRef->keyRef);
 		}}
-		cmdBuffers.clear();
 		cmdPoolRef = nullptr;
 		haveSetupCmdBuffer = false;
 	}
 	waitOn.clear();
 	waitOnOld.clear();
 	signal.clear();
-	cpuSync.clear();
+	cpuSync = true;
 }
 
 HIGHOMEGA::GL::CommandBuffer::~CommandBuffer()
@@ -3700,103 +3737,85 @@ ThreadLocalCache <VkCommandPool>::value *HIGHOMEGA::GL::CommandBuffer::CreateCom
 	return &cmdPools[queueType].dir[ThreadID];
 }
 
-void HIGHOMEGA::GL::CommandBuffer::BeginCommandBuffer(InstanceClass & instanceRef, unsigned int inpNumCmdBufs, unsigned int which, QUEUE_TYPE inQueueType)
+void HIGHOMEGA::GL::CommandBuffer::BeginCommandBuffer(InstanceClass & instanceRef, QUEUE_TYPE inQueueType)
 {
-	if (inpNumCmdBufs == 0) FATAL_ERROR("CommandBuffer: number of command buffers cannot be zero");
-
 	queueType = inQueueType;
 
 	VkResult result;
 
-	if (inpNumCmdBufs != cmdBuffers.size())
+	if (!haveSetupCmdBuffer)
 	{
-		if (cmdBuffers.size() > 0) DestroyCommandBuffer();
 		cmdPoolRef = CreateCommandPool(instanceRef, queueType);
 
-		cmdBuffers.resize(inpNumCmdBufs);
-		ownSemaphores.resize(inpNumCmdBufs);
-		for (unsigned int i = 0; i != inpNumCmdBufs; i++)
-			ownSemaphores[i].Semaphore(&instanceRef);
+		ownSemaphore.Semaphore(&instanceRef);
 
 		VkCommandBufferAllocateInfo cmdBufAllocateInfo = {};
 		cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 		cmdBufAllocateInfo.commandPool = cmdPoolRef->elem;
 		cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		cmdBufAllocateInfo.commandBufferCount = (uint32_t)cmdBuffers.size();
+		cmdBufAllocateInfo.commandBufferCount = 1;
 
-		result = vkAllocateCommandBuffers(ptrToInstance->device, &cmdBufAllocateInfo, cmdBuffers.data());
+		result = vkAllocateCommandBuffers(ptrToInstance->device, &cmdBufAllocateInfo, &cmdBuffer);
 		if (result != VK_SUCCESS) { FATAL_ERROR("CommandBuffer: Could not create command buffer"); }
 		haveSetupCmdBuffer = true;
 	}
 	else
 	{
-		WaitForCompletion(which);
-		result = vkResetCommandBuffer(cmdBuffers[which], (VkCommandBufferResetFlags)0);
+		WaitForCompletion();
+		result = vkResetCommandBuffer(cmdBuffer, (VkCommandBufferResetFlags)0);
 		if (result != VK_SUCCESS) { FATAL_ERROR("CommandBuffer: Could not reset command buffer"); }
 	}
 
 	VkCommandBufferBeginInfo cmdBufInfo = {};
 	cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
-	result = vkBeginCommandBuffer(cmdBuffers[which], &cmdBufInfo);
+	result = vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo);
 	if (result != VK_SUCCESS) FATAL_ERROR("CommandBuffer: Could not begin command buffer");
 }
 
-void HIGHOMEGA::GL::CommandBuffer::EndCommandBuffer(unsigned int which)
+void HIGHOMEGA::GL::CommandBuffer::EndCommandBuffer()
 {
 	if (!ptrToInstance || !cmdPoolRef) FATAL_ERROR("CommandBuffer: No instance or cmd pool supplied");
 
-	VkResult result = vkEndCommandBuffer(cmdBuffers[which]);
+	VkResult result = vkEndCommandBuffer(cmdBuffer);
 	if (result != VK_SUCCESS) FATAL_ERROR("CommandBuffer: Could not end command buffer");
 }
 
-void HIGHOMEGA::GL::CommandBuffer::WaitOnSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOn, unsigned int which)
+void HIGHOMEGA::GL::CommandBuffer::WaitOnSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOn)
 {
-	if (which >= waitOn.size()) waitOn.resize(which + 1); // Still won't be waited on (uninitialized)
-	waitOn[which] = inWaitOn;
+	waitOn = inWaitOn;
 }
 
-void HIGHOMEGA::GL::CommandBuffer::WaitOnOldSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOnOld, unsigned int which)
+void HIGHOMEGA::GL::CommandBuffer::WaitOnOldSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOnOld)
 {
-	if (which >= waitOnOld.size()) waitOnOld.resize(which + 1); // Still won't be waited on (uninitialized)
-	waitOnOld[which] = inWaitOnOld;
+	waitOnOld = inWaitOnOld;
 }
 
-void HIGHOMEGA::GL::CommandBuffer::SignalSemaphores(const std::unordered_set<SemaphoreClass*>& inSignal, unsigned int which)
+void HIGHOMEGA::GL::CommandBuffer::SignalSemaphores(const std::unordered_set<SemaphoreClass*>& inSignal)
 {
-	if (which >= signal.size()) signal.resize(which + 1); // Still won't be signalled (uninitialized)
-	signal[which] = inSignal;
+	signal = inSignal;
 }
 
-void HIGHOMEGA::GL::CommandBuffer::NoCPUSync(unsigned int which)
+void HIGHOMEGA::GL::CommandBuffer::NoCPUSync()
 {
-	if (which >= cpuSync.size())
-	{
-		unsigned int prevSize = (unsigned int)cpuSync.size();
-		cpuSync.resize(which + 1);
-		unsigned int newSize = (unsigned int)cpuSync.size();
-		for (unsigned int i = prevSize; i != newSize; i++)
-			cpuSync[which] = true;
-	}
-	cpuSync[which] = false;
+	cpuSync = false;
 }
 
-void HIGHOMEGA::GL::CommandBuffer::DoCPUSync(unsigned int which)
+void HIGHOMEGA::GL::CommandBuffer::DoCPUSync()
 {
-	if (which >= cpuSync.size())
-	{
-		unsigned int prevSize = (unsigned int)cpuSync.size();
-		cpuSync.resize(which + 1);
-		unsigned int newSize = (unsigned int)cpuSync.size();
-		for (unsigned int i = prevSize; i != newSize; i++)
-			cpuSync[which] = true;
-	}
-	cpuSync[which] = true;
+	cpuSync = true;
 }
 
-void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer(unsigned int which)
+void HIGHOMEGA::GL::CommandBuffer::EnableSafeResubmit()
+{
+	safeResubmit = true;
+}
+
+void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer()
 {
 	if (!ptrToInstance || !cmdPoolRef) FATAL_ERROR("CommandBuffer: No instance or cmd pool supplied");
+
+	if (safeResubmit && !CanResubmit()) return;
 
 	VkTimelineSemaphoreSubmitInfo timelineInfo;
 	timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
@@ -3808,62 +3827,59 @@ void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer(unsigned int which)
 
 	VkSubmitInfo submitInfo = {};
 	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	if (which < waitOn.size())
-		for (SemaphoreClass* curSem : waitOn[which])
-			if (curSem->haveSemaphore && curSem->readyForWait)
+	for (SemaphoreClass* curSem : waitOn)
+		if (curSem->haveSemaphore && curSem->readyForWait)
+		{
+			if (curSem->binary)
 			{
-				if (curSem->binary)
-				{
-					waitValues.push_back(0u); // Nonsense
-					waitSems.push_back(curSem->semaphore);
-				}
-				else if (curSem->signalValue > curSem->waitValue)
-				{
-					curSem->waitValue = curSem->signalValue;
-					waitValues.push_back(curSem->waitValue);
-					waitSems.push_back(curSem->semaphore);
-				}
-				curSem->readyForWait = false;
+				waitValues.push_back(0u); // Nonsense
+				waitSems.push_back(curSem->semaphore);
 			}
-	if (which < waitOnOld.size())
-		for (SemaphoreClass* curSem : waitOnOld[which])
-			if (curSem->haveSemaphore && curSem->readyForWait)
+			else if (curSem->signalValue > curSem->waitValue)
 			{
-				if (curSem->binary) FATAL_ERROR("Can't wait on old binary semaphores");
-				else if (curSem->signalValue > curSem->waitValue)
-				{
-					waitValues.push_back(curSem->waitValue);
-					waitSems.push_back(curSem->semaphore);
-				}
+				curSem->waitValue = curSem->signalValue;
+				waitValues.push_back(curSem->waitValue);
+				waitSems.push_back(curSem->semaphore);
 			}
-	if (ownSemaphores[which].haveSemaphore && ownSemaphores[which].readyForWait && ownSemaphores[which].signalValue > ownSemaphores[which].waitValue)
+			curSem->readyForWait = false;
+		}
+	for (SemaphoreClass* curSem : waitOnOld)
+		if (curSem->haveSemaphore && curSem->readyForWait)
+		{
+			if (curSem->binary) FATAL_ERROR("Can't wait on old binary semaphores");
+			else if (curSem->signalValue > curSem->waitValue)
+			{
+				waitValues.push_back(curSem->waitValue);
+				waitSems.push_back(curSem->semaphore);
+			}
+		}
+	if (ownSemaphore.haveSemaphore && ownSemaphore.readyForWait && ownSemaphore.signalValue > ownSemaphore.waitValue)
 	{
-		ownSemaphores[which].waitValue = ownSemaphores[which].signalValue;
-		ownSemaphores[which].readyForWait = false;
-		waitValues.push_back(ownSemaphores[which].waitValue);
-		waitSems.push_back(ownSemaphores[which].semaphore);
+		ownSemaphore.waitValue = ownSemaphore.signalValue;
+		ownSemaphore.readyForWait = false;
+		waitValues.push_back(ownSemaphore.waitValue);
+		waitSems.push_back(ownSemaphore.semaphore);
 	}
 
-	if (which < signal.size())
-		for (SemaphoreClass* curSem : signal[which])
-			if (curSem->haveSemaphore)
-				if (curSem->binary && !curSem->readyForWait)
-				{
-					signalValues.push_back(0u); // Nonsense
-					curSem->readyForWait = true;
-					signalSems.push_back(curSem->semaphore);
-				}
-				else if (!curSem->binary && !curSem->readyForWait && curSem->signalValue == curSem->waitValue)
-				{
-					signalValues.push_back(++curSem->signalValue);
-					curSem->readyForWait = true;
-					signalSems.push_back(curSem->semaphore);
-				}
-	if (ownSemaphores[which].haveSemaphore && !ownSemaphores[which].binary /* won't be */ && !ownSemaphores[which].readyForWait && ownSemaphores[which].signalValue == ownSemaphores[which].waitValue)
+	for (SemaphoreClass* curSem : signal)
+		if (curSem->haveSemaphore)
+			if (curSem->binary && !curSem->readyForWait)
+			{
+				signalValues.push_back(0u); // Nonsense
+				curSem->readyForWait = true;
+				signalSems.push_back(curSem->semaphore);
+			}
+			else if (!curSem->binary && !curSem->readyForWait && curSem->signalValue == curSem->waitValue)
+			{
+				signalValues.push_back(++curSem->signalValue);
+				curSem->readyForWait = true;
+				signalSems.push_back(curSem->semaphore);
+			}
+	if (ownSemaphore.haveSemaphore && !ownSemaphore.binary /* won't be */ && !ownSemaphore.readyForWait && ownSemaphore.signalValue == ownSemaphore.waitValue)
 	{
-		signalValues.push_back(++ownSemaphores[which].signalValue);
-		ownSemaphores[which].readyForWait = true;
-		signalSems.push_back(ownSemaphores[which].semaphore);
+		signalValues.push_back(++ownSemaphore.signalValue);
+		ownSemaphore.readyForWait = true;
+		signalSems.push_back(ownSemaphore.semaphore);
 	}
 
 	timelineInfo.waitSemaphoreValueCount = (uint32_t)waitValues.size();
@@ -3880,7 +3896,7 @@ void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer(unsigned int which)
 	submitInfo.signalSemaphoreCount = (uint32_t)signalSems.size();
 	submitInfo.pSignalSemaphores = signalSems.data();
 	submitInfo.commandBufferCount = 1;
-	submitInfo.pCommandBuffers = &cmdBuffers[which];
+	submitInfo.pCommandBuffers = &cmdBuffer;
 
 	VkResult result;
 	{std::unique_lock<std::mutex> lk(ptrToInstance->allQueues[queueType].mtx);
@@ -3889,33 +3905,54 @@ void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer(unsigned int which)
 	{
 		if (result == VK_ERROR_OUT_OF_HOST_MEMORY) FATAL_ERROR("CommandBuffer could not submit and wait on queue: out of host memory");
 		else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) FATAL_ERROR("CommandBuffer could not submit and wait on queue: out of device memory");
+		else if (result == VK_ERROR_UNKNOWN) FATAL_ERROR("CommandBuffer could not submit and wait on queue: unknown error");
 		else FATAL_ERROR("CommandBuffer could not submit and wait on queue: device lost");
 	}
 
-	if ((which >= cpuSync.size()) || cpuSync[which]) WaitForCompletion(which);
+	if (cpuSync) WaitForCompletion();
 }
 
-void HIGHOMEGA::GL::CommandBuffer::WaitForCompletion(unsigned int which)
+void HIGHOMEGA::GL::CommandBuffer::WaitForCompletion()
 {
-	if (!ptrToInstance || !cmdPoolRef || which >= ownSemaphores.size()) return;
+	if (!ptrToInstance || !cmdPoolRef) return;
 
-	if (ownSemaphores[which].haveSemaphore && ownSemaphores[which].readyForWait && ownSemaphores[which].signalValue > ownSemaphores[which].waitValue)
+	if (ownSemaphore.haveSemaphore && ownSemaphore.readyForWait && ownSemaphore.signalValue > ownSemaphore.waitValue)
 	{
 		VkSemaphoreWaitInfo waitInfo = {};
 		waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
 		waitInfo.semaphoreCount = 1;
-		waitInfo.pSemaphores = &ownSemaphores[which].semaphore;
-		waitInfo.pValues = &ownSemaphores[which].signalValue;
+		waitInfo.pSemaphores = &ownSemaphore.semaphore;
+		waitInfo.pValues = &ownSemaphore.signalValue;
 		waitInfo.flags = 0;
 		ptrToInstance->fpWaitSemaphoresKHR(ptrToInstance->device, &waitInfo, 10000000000);
-		ownSemaphores[which].waitValue = ownSemaphores[which].signalValue;
-		ownSemaphores[which].readyForWait = false;
+		ownSemaphore.waitValue = ownSemaphore.signalValue;
+		ownSemaphore.readyForWait = false;
 	}
 }
 
-unsigned int HIGHOMEGA::GL::CommandBuffer::CommandBufferCount()
+bool HIGHOMEGA::GL::CommandBuffer::CanResubmit()
 {
-	return (unsigned int)cmdBuffers.size();
+	if (!ptrToInstance || !cmdPoolRef || !ownSemaphore.haveSemaphore) return false;
+
+	if (ownSemaphore.readyForWait && ownSemaphore.signalValue > ownSemaphore.waitValue)
+	{
+		VkSemaphoreWaitInfo waitInfo = {};
+		waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+		waitInfo.semaphoreCount = 1;
+		waitInfo.pSemaphores = &ownSemaphore.semaphore;
+		waitInfo.pValues = &ownSemaphore.signalValue;
+		waitInfo.flags = 0;
+		if (ptrToInstance->fpWaitSemaphoresKHR(ptrToInstance->device, &waitInfo, 0) == VK_SUCCESS)
+		{
+			ownSemaphore.waitValue = ownSemaphore.signalValue;
+			ownSemaphore.readyForWait = false;
+			return true;
+		}
+		else
+			return false;
+	}
+	else
+		return true;
 }
 
 HIGHOMEGA::GL::ImageClearColor::ImageClearColor(vec3 rgb, float alpha)
@@ -4474,7 +4511,7 @@ void HIGHOMEGA::GL::ImageClass::CreateStandaloneImage(InstanceClass & ptrToInsta
 	try { setupStandAloneCmdBuffer.BeginCommandBuffer(*cachedInstance); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for standalone image"); }
 
-	setImageLayout(setupStandAloneCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier,
+	setImageLayout(setupStandAloneCmdBuffer.cmdBuffer, imageInFrontOfBarrier,
 		(depthStencilMode != NONE) ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_COLOR_BIT,
 		VK_IMAGE_LAYOUT_UNDEFINED,
 		(depthStencilMode == SAMPLE_NONE) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL,
@@ -4604,10 +4641,10 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 		std::vector <VkImage*> imageInFrontOfBarrier;
 		imageInFrontOfBarrier.push_back(&image);
 
-		try { setupTextureTransferCmdBuffer.BeginCommandBuffer(*cachedInstance, 1u, 0u, TRANSFER_QUEUE); }
+		try { setupTextureTransferCmdBuffer.BeginCommandBuffer(*cachedInstance, TRANSFER_QUEUE); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for create compressed texture"); }
 
-		setImageLayout(setupTextureTransferCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 0, 0, TRANSFER_TO_GRAPHICS_RELEASE);
+		setImageLayout(setupTextureTransferCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 0, 0, TRANSFER_TO_GRAPHICS_RELEASE);
 
 		try { setupTextureTransferCmdBuffer.EndCommandBuffer(); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for create compressed texture"); }
@@ -4618,7 +4655,7 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 		try { setupTextureGraphicsCmdBuffer.BeginCommandBuffer(*cachedInstance); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not begin second setup cmd buffer for create compressed texture"); }
 
-		setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 0, 0, TRANSFER_TO_GRAPHICS_ACQUIRE);
+		setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 0, 0, TRANSFER_TO_GRAPHICS_ACQUIRE);
 
 		try { setupTextureGraphicsCmdBuffer.EndCommandBuffer(); }
 		catch (...) { RemovePast(); FATAL_ERROR("Could not begin second setup cmd buffer for create compressed texture"); }
@@ -4716,17 +4753,17 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 
 	bufferCopyRegions.push_back(bufferCopyRegion);
 
-	try { setupTextureTransferCmdBuffer.BeginCommandBuffer(*cachedInstance, 1u, 0u, TRANSFER_QUEUE); }
+	try { setupTextureTransferCmdBuffer.BeginCommandBuffer(*cachedInstance, TRANSFER_QUEUE); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not begin setup cmd buffer for create texture"); }
 
 	std::vector <VkImage *> imageInFrontOfBarrier;
 	imageInFrontOfBarrier.push_back(&image);
 
-	setImageLayout(setupTextureTransferCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, 0, mipLevels);
+	setImageLayout(setupTextureTransferCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, 0, mipLevels);
 
-	vkCmdCopyBufferToImage(setupTextureTransferCmdBuffer.cmdBuffers[0], imageStagingBuffer.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)bufferCopyRegions.size(), bufferCopyRegions.data());
+	vkCmdCopyBufferToImage(setupTextureTransferCmdBuffer.cmdBuffer, imageStagingBuffer.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)bufferCopyRegions.size(), bufferCopyRegions.data());
 
-	setImageLayout(setupTextureTransferCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, 1, TRANSFER_TO_GRAPHICS_RELEASE);
+	setImageLayout(setupTextureTransferCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, 1, TRANSFER_TO_GRAPHICS_RELEASE);
 
 	try { setupTextureTransferCmdBuffer.EndCommandBuffer(); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not end setup cmd buffer for create texture"); }
@@ -4737,7 +4774,7 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 	try { setupTextureGraphicsCmdBuffer.BeginCommandBuffer(*cachedInstance); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not begin second setup cmd buffer for create texture"); }
 
-	setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, 1, TRANSFER_TO_GRAPHICS_ACQUIRE);
+	setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, 1, TRANSFER_TO_GRAPHICS_ACQUIRE);
 
 	for (int i = 1; i < (int)mipLevels; i++)
 	{
@@ -4762,14 +4799,14 @@ void HIGHOMEGA::GL::ImageClass::CreateTextureFromFileOrData(InstanceClass & ptrT
 		imageBlit.dstOffsets[1].y = int32_t(max (height >> i, 1));
 		imageBlit.dstOffsets[1].z = 1;
 
-		setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, i, 1);
+		setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, i, 1);
 
-		vkCmdBlitImage(setupTextureGraphicsCmdBuffer.cmdBuffers[0], image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageBlit, VK_FILTER_LINEAR);
+		vkCmdBlitImage(setupTextureGraphicsCmdBuffer.cmdBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageBlit, VK_FILTER_LINEAR);
 
-		setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, i, 1);
+		setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, i, 1);
 	}
 
-	setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 0, mipLevels);
+	setImageLayout(setupTextureGraphicsCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 0, mipLevels);
 
 	try { setupTextureGraphicsCmdBuffer.EndCommandBuffer(); }
 	catch (...) { RemovePast(); FATAL_ERROR("Could not end second setup cmd buffer for create texture"); }
@@ -4804,7 +4841,7 @@ void HIGHOMEGA::GL::ImageClass::ClearColors(std::vector <ImageClass *> & images,
 		for (ImageClass * curImg : images)
 			imagesInFrontOfBarrier.push_back(&curImg->image);
 
-		images[0]->setImageLayout(images[0]->clearCmdBuffer.cmdBuffers[0], imagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, 0, images[0]->mipLevels);
+		images[0]->setImageLayout(images[0]->clearCmdBuffer.cmdBuffer, imagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, 0, images[0]->mipLevels);
 
 		VkImageSubresourceRange subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS };
 		VkClearColorValue clearWith;
@@ -4818,9 +4855,9 @@ void HIGHOMEGA::GL::ImageClass::ClearColors(std::vector <ImageClass *> & images,
 			clearWith.uint32[3] = (uint32_t)clearColor.uintA;
 		}
 		for (ImageClass * curImg : images)
-			vkCmdClearColorImage(images[0]->clearCmdBuffer.cmdBuffers[0], curImg->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearWith, 1, &subresourceRange);
+			vkCmdClearColorImage(images[0]->clearCmdBuffer.cmdBuffer, curImg->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearWith, 1, &subresourceRange);
 
-		images[0]->setImageLayout(images[0]->clearCmdBuffer.cmdBuffers[0], imagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, 1, 0, images[0]->mipLevels);
+		images[0]->setImageLayout(images[0]->clearCmdBuffer.cmdBuffer, imagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, 1, 0, images[0]->mipLevels);
 
 		try { images[0]->clearCmdBuffer.EndCommandBuffer(); }
 		catch (...) { FATAL_ERROR("Could not end setup cmd buffer for clear color"); }
@@ -4852,8 +4889,8 @@ void HIGHOMEGA::GL::ImageClass::CopyImages(std::vector <ImageClass *> & copySour
 			targetImagesInFrontOfBarrier.push_back(&copyTarget[i]->image);
 		}
 
-		copySource[0]->setImageLayout(copySource[0]->copyCmdBuffer.cmdBuffers[0], sourceImagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, copySource[0]->layers, 0, copySource[0]->mipLevels);
-		copySource[0]->setImageLayout(copySource[0]->copyCmdBuffer.cmdBuffers[0], targetImagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copySource[0]->layers, 0, copySource[0]->mipLevels);
+		copySource[0]->setImageLayout(copySource[0]->copyCmdBuffer.cmdBuffer, sourceImagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, copySource[0]->layers, 0, copySource[0]->mipLevels);
+		copySource[0]->setImageLayout(copySource[0]->copyCmdBuffer.cmdBuffer, targetImagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copySource[0]->layers, 0, copySource[0]->mipLevels);
 
 		for (int i = 0; i != copySource.size(); i++)
 		{
@@ -4871,10 +4908,10 @@ void HIGHOMEGA::GL::ImageClass::CopyImages(std::vector <ImageClass *> & copySour
 			copyImageStruct.extent.width = copySource[i]->width;
 			copyImageStruct.extent.height = copySource[i]->height;
 			copyImageStruct.extent.depth = copySource[i]->depth;
-			vkCmdCopyImage(copySource[0]->copyCmdBuffer.cmdBuffers[0], copySource[i]->image, VK_IMAGE_LAYOUT_GENERAL, copyTarget[i]->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyImageStruct);
+			vkCmdCopyImage(copySource[0]->copyCmdBuffer.cmdBuffer, copySource[i]->image, VK_IMAGE_LAYOUT_GENERAL, copyTarget[i]->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyImageStruct);
 		}
 
-		copySource[0]->setImageLayout(copySource[0]->copyCmdBuffer.cmdBuffers[0], targetImagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, copySource[0]->layers, 0, copySource[0]->mipLevels);
+		copySource[0]->setImageLayout(copySource[0]->copyCmdBuffer.cmdBuffer, targetImagesInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, copySource[0]->layers, 0, copySource[0]->mipLevels);
 
 		try { copySource[0]->copyCmdBuffer.EndCommandBuffer(); }
 		catch (...) { FATAL_ERROR("Could not end setup cmd buffer for image to image copy"); }
@@ -4915,11 +4952,11 @@ void HIGHOMEGA::GL::ImageClass::DownloadData(bool shaderReadAfterwards)
 		std::vector <VkImage *> imageInFrontOfBarrier;
 		imageInFrontOfBarrier.push_back(&image);
 
-		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, mipLevels);
+		setImageLayout(downloadCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layers, 0, mipLevels);
 
-		vkCmdCopyImageToBuffer(downloadCmdBuffer.cmdBuffers[0], image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, imageStagingBuffer.buffer, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
+		vkCmdCopyImageToBuffer(downloadCmdBuffer.cmdBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, imageStagingBuffer.buffer, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
 
-		setImageLayout(downloadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, shaderReadAfterwards ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
+		setImageLayout(downloadCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, shaderReadAfterwards ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
 
 		try { downloadCmdBuffer.EndCommandBuffer(); }
 		catch (...) { FATAL_ERROR("Could not end setup cmd buffer for copy to buffer"); }
@@ -4984,11 +5021,11 @@ void HIGHOMEGA::GL::ImageClass::UploadData(unsigned char* inData, unsigned int i
 		std::vector <VkImage*> imageInFrontOfBarrier;
 		imageInFrontOfBarrier.push_back(&image);
 
-		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, 0, mipLevels);
+		setImageLayout(uploadCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layers, 0, mipLevels);
 
-		vkCmdCopyBufferToImage(uploadCmdBuffer.cmdBuffers[0], imageStagingBuffer.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
+		vkCmdCopyBufferToImage(uploadCmdBuffer.cmdBuffer, imageStagingBuffer.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)imageCopyRegions.size(), imageCopyRegions.data());
 
-		setImageLayout(uploadCmdBuffer.cmdBuffers[0], imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, shaderReadAfterwards ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
+		setImageLayout(uploadCmdBuffer.cmdBuffer, imageInFrontOfBarrier, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, shaderReadAfterwards ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, layers, 0, mipLevels);
 
 		try { uploadCmdBuffer.EndCommandBuffer(); }
 		catch (...) { FATAL_ERROR("Could not end setup cmd buffer for copy to image"); }
@@ -5523,17 +5560,17 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::CreateAccelStruct(bool isBlas, VkAcce
 
 		accelerationStructureBuildGeomInfo.scratchData.deviceAddress = scratchAddress;
 
-		BeginCommandBuffer(*ptrToInstance, 3u, 1u);
+		tlasCreateCmdBuf.BeginCommandBuffer(*ptrToInstance);
 
 		VkAccelerationStructureBuildRangeInfoKHR buildOffsetInfo{ static_cast<uint32_t>(instanceCount), 0, 0, 0 };
 		const VkAccelerationStructureBuildRangeInfoKHR* pBuildOffsetInfo = &buildOffsetInfo;
-		RTInstance::fpCmdBuildAccelerationStructuresKHR(cmdBuffers[1], 1, &accelerationStructureBuildGeomInfo, &pBuildOffsetInfo);
+		RTInstance::fpCmdBuildAccelerationStructuresKHR(tlasCreateCmdBuf.cmdBuffer, 1, &accelerationStructureBuildGeomInfo, &pBuildOffsetInfo);
 
-		WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore, &rtInstanceBuffer->semaphore}, 1);
-		SignalSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore}, 1);
-		NoCPUSync(1);
-		EndCommandBuffer(1);
-		SubmitCommandBuffer(1);
+		tlasCreateCmdBuf.WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore, &rtInstanceBuffer->semaphore});
+		tlasCreateCmdBuf.SignalSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore});
+		tlasCreateCmdBuf.NoCPUSync();
+		tlasCreateCmdBuf.EndCommandBuffer();
+		tlasCreateCmdBuf.SubmitCommandBuffer();
 	}
 }
 
@@ -5610,16 +5647,17 @@ void HIGHOMEGA::GL::KHR_RT::RTAccelStruct::UpdateAccelStruct(bool isBlas, VkAcce
 
 		if (!reuseUpdateCmdBuffer)
 		{
-			BeginCommandBuffer(*ptrToInstance, 3u, 2u);
-			RTInstance::fpCmdBuildAccelerationStructuresKHR(cmdBuffers[2], 1, &accelerationStructureBuildGeomInfo, &pBuildOffsetInfo);
-			EndCommandBuffer(2);
+			tlasUpdateCmdBuf.BeginCommandBuffer(*ptrToInstance);
+			RTInstance::fpCmdBuildAccelerationStructuresKHR(tlasUpdateCmdBuf.cmdBuffer, 1, &accelerationStructureBuildGeomInfo, &pBuildOffsetInfo);
+			tlasUpdateCmdBuf.EndCommandBuffer();
 			reuseUpdateCmdBuffer = true;
 		}
 
-		WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore, &rtInstanceBuffer->semaphore}, 2);
-		SignalSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore}, 2);
-		NoCPUSync(2);
-		SubmitCommandBuffer(2);
+		tlasUpdateCmdBuf.WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore, &rtInstanceBuffer->semaphore});
+		tlasUpdateCmdBuf.SignalSemaphores(std::unordered_set<SemaphoreClass*>{&semaphore});
+		tlasUpdateCmdBuf.NoCPUSync();
+		tlasUpdateCmdBuf.EnableSafeResubmit();
+		tlasUpdateCmdBuf.SubmitCommandBuffer();
 	}
 }
 
@@ -6550,32 +6588,33 @@ void HIGHOMEGA::GL::KHR_RT::RTScene::CreateOrUpdateRTResources(RTScene* optional
 
 			if (optionalScene->previousUpdateHash != updateHash || optionalScene->previousUpdateHash == 0ull)
 			{
-				optionalScene->BeginCommandBuffer(*instancePtr, 3u, 0u);
+				optionalScene->batchBlasBuildCmdBuf.BeginCommandBuffer(*instancePtr);
 
-				RTInstance::fpCmdBuildAccelerationStructuresKHR(optionalScene->cmdBuffers[0], (unsigned int)blBuildParams.blasBuildInfos.size(),
+				RTInstance::fpCmdBuildAccelerationStructuresKHR(optionalScene->batchBlasBuildCmdBuf.cmdBuffer, (unsigned int)blBuildParams.blasBuildInfos.size(),
 					(const VkAccelerationStructureBuildGeometryInfoKHR*)blBuildParams.blasBuildInfos.data(),
 					(const VkAccelerationStructureBuildRangeInfoKHR* const*)blBuildParams.blasBuildRanges.data());
-				optionalScene->EndCommandBuffer(0);
+				optionalScene->batchBlasBuildCmdBuf.EndCommandBuffer();
 				optionalScene->previousUpdateHash = updateHash;
 			}
 
-			optionalScene->WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&optionalScene->semaphore}, 0);
-			optionalScene->SignalSemaphores(std::unordered_set<SemaphoreClass*>{&optionalScene->semaphore}, 0);
-			optionalScene->NoCPUSync(0);
-			optionalScene->SubmitCommandBuffer(0);
+			optionalScene->batchBlasBuildCmdBuf.WaitOnSemaphores(std::unordered_set<SemaphoreClass*>{&optionalScene->semaphore});
+			optionalScene->batchBlasBuildCmdBuf.SignalSemaphores(std::unordered_set<SemaphoreClass*>{&optionalScene->semaphore});
+			optionalScene->batchBlasBuildCmdBuf.NoCPUSync();
+			optionalScene->batchBlasBuildCmdBuf.EnableSafeResubmit();
+			optionalScene->batchBlasBuildCmdBuf.SubmitCommandBuffer();
 		}
 		else
 		{
 			if (rebuildRTGeoms.size())
 			{
 				CommandBuffer createBlases;
-				createBlases.BeginCommandBuffer(*instancePtr, 1u, 0u, COMPUTE_QUEUE);
-				RTInstance::fpCmdBuildAccelerationStructuresKHR(createBlases.cmdBuffers[0], (unsigned int)blBuildParams.blasBuildInfos.size(),
+				createBlases.BeginCommandBuffer(*instancePtr, COMPUTE_QUEUE);
+				RTInstance::fpCmdBuildAccelerationStructuresKHR(createBlases.cmdBuffer, (unsigned int)blBuildParams.blasBuildInfos.size(),
 					(const VkAccelerationStructureBuildGeometryInfoKHR*)blBuildParams.blasBuildInfos.data(),
 					(const VkAccelerationStructureBuildRangeInfoKHR* const*)blBuildParams.blasBuildRanges.data());
-				createBlases.EndCommandBuffer(0);
-				createBlases.DoCPUSync(0);
-				createBlases.SubmitCommandBuffer(0);
+				createBlases.EndCommandBuffer();
+				createBlases.DoCPUSync();
+				createBlases.SubmitCommandBuffer();
 			}
 		}
 	}
@@ -6668,6 +6707,7 @@ void HIGHOMEGA::GL::KHR_RT::RTTracelet::Submit(unsigned int inpWidth, unsigned i
 
 	if (!recordedCmdBuf)
 	{
+		ptrToInstance->GPUFlush();
 		if (!recordedPSO)
 		{
 			DSL.CreateDescriptorSetLayout(inpTracingResources, ptrToInstance);
@@ -6699,10 +6739,10 @@ void HIGHOMEGA::GL::KHR_RT::RTTracelet::Submit(unsigned int inpWidth, unsigned i
 			if (curRes.IsProduced()) signalSems.merge(curRes.GetAsDependencies());
 		}
 
-		BeginCommandBuffer(*ptrToInstance);
+		traceCmdBuf.BeginCommandBuffer(*ptrToInstance);
 
-		vkCmdBindPipeline(cmdBuffers[0], VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, PSO.pipeline);
-		vkCmdBindDescriptorSets(cmdBuffers[0], VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, PSO.pipelineLayout, 0, (uint32_t)DS.descriptorSets.size(), DS.descriptorSets.data(), 0, 0);
+		vkCmdBindPipeline(traceCmdBuf.cmdBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, PSO.pipeline);
+		vkCmdBindDescriptorSets(traceCmdBuf.cmdBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, PSO.pipelineLayout, 0, (uint32_t)DS.descriptorSets.size(), DS.descriptorSets.data(), 0, 0);
 
 		unsigned int sbtChunkSize = (RTInstance::raytracingPipelineProperties.shaderGroupHandleSize + (RTInstance::raytracingPipelineProperties.shaderGroupBaseAlignment - 1)) & (~(RTInstance::raytracingPipelineProperties.shaderGroupBaseAlignment - 1));
 
@@ -6716,16 +6756,16 @@ void HIGHOMEGA::GL::KHR_RT::RTTracelet::Submit(unsigned int inpWidth, unsigned i
 			VkStridedDeviceAddressRegionKHR{sbtDeviceAddress + 2u * sbtChunkSize, sbtChunkSize, sbtChunkSize},
 			VkStridedDeviceAddressRegionKHR{0u,0u,0u} };
 
-		RTInstance::fpCmdTraceRaysKHR(cmdBuffers[0], &strideAddresses[0], &strideAddresses[1], &strideAddresses[2], &strideAddresses[3], inpWidth, inpHeight, inpDepth);
+		RTInstance::fpCmdTraceRaysKHR(traceCmdBuf.cmdBuffer, &strideAddresses[0], &strideAddresses[1], &strideAddresses[2], &strideAddresses[3], inpWidth, inpHeight, inpDepth);
 
-		EndCommandBuffer();
+		traceCmdBuf.EndCommandBuffer();
 
 		recordedCmdBuf = true;
 	}
 
-	WaitOnSemaphores(waitSems);
-	WaitOnOldSemaphores(waitOldSems);
-	SignalSemaphores(signalSems);
-	if (!doCPUSync) NoCPUSync();
-	SubmitCommandBuffer();
+	traceCmdBuf.WaitOnSemaphores(waitSems);
+	traceCmdBuf.WaitOnOldSemaphores(waitOldSems);
+	traceCmdBuf.SignalSemaphores(signalSems);
+	if (!doCPUSync) traceCmdBuf.NoCPUSync();
+	traceCmdBuf.SubmitCommandBuffer();
 }

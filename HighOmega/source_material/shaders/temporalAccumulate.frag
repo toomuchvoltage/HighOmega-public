@@ -108,8 +108,8 @@ void unpackEmissivityRefractiveIndexDielectric (float packedVal, out float emiss
 void main()
 {
 	ivec2 texelLoc = ivec2 (inUV * vec2(imageSize (worldPosAttach)));
-	vec4 fetchedWorldPosAndMaterialHint = imageLoad (worldPosAttach, texelLoc);
-	if ( fetchedWorldPosAndMaterialHint == vec4 (0.0) )
+	vec3 fetchedWorldPos = imageLoad (worldPosAttach, texelLoc).rgb;
+	if ( fetchedWorldPos == vec3 (0.0) )
 	{
 		outSpecularColor = vec4 (0.0);
 		return ;
@@ -131,10 +131,10 @@ void main()
 	ivec3 storeCoord = ivec3 (ivec2 (gl_FragCoord.xy), int(pathTraceParams.timeTurnBlurDirectionRawLight.y));
 	
 	imageStore (glossLightTrail, storeCoord, glossLightFetch);
-	imageStore (worldPosCacheOutput, storeCoord, vec4 (fetchedWorldPosAndMaterialHint.xyz, 1.0));
+	imageStore (worldPosCacheOutput, storeCoord, vec4 (fetchedWorldPos, 1.0));
 
 	vec4 glossLightAccum = vec4 (0.0);
-	temporalAccumulate (glossLightFetch, max(roughnessSpecularity.x, roughnessSpecularity.y), glossLightAccum, fetchedWorldPosAndMaterialHint.xyz);
+	temporalAccumulate (glossLightFetch, max(roughnessSpecularity.x, roughnessSpecularity.y), glossLightAccum, fetchedWorldPos);
 	
 	outSpecularColor = glossLightAccum;
 }

@@ -109,12 +109,12 @@ void main()
 	
 	vec2 UVDir = vec2 (xDir, yDir);
 
-	vec4 fetchedPosAndMaterialHint = imageLoad(worldPosAttach, texelLoc);
+	vec3 fetchedPos = imageLoad(worldPosAttach, texelLoc).xyz;
 	vec3 fetchedNorm = fromZSignXY(floatBitsToUint (imageLoad(normAttach, texelLoc).x));
 
 	vec4 glossAccum = centerSampleGloss;
 	float glossWeightAccum = 1.0;
-	vec3 toEye = vec3 (frameMVP.lookEyeX.a, frameMVP.upEyeY.a, frameMVP.sideEyeZ.a) - fetchedPosAndMaterialHint.xyz;
+	vec3 toEye = vec3 (frameMVP.lookEyeX.a, frameMVP.upEyeY.a, frameMVP.sideEyeZ.a) - fetchedPos;
 	int kernelWidth = int (mix (5.0, 15.0, roughnessMeasure));
 	float radialCutoff = max (dot (toEye, toEye) * 0.001111, max (roughnessMeasure * 25.0, 1.0));
 	for (int i = -kernelWidth; i != kernelWidth+1; i++)
@@ -122,10 +122,10 @@ void main()
 		vec2 curUV = inUV + float(i) * UVDir;
 		if ( i == 0 || curUV != clamp (curUV,vec2(0.0),vec2(0.999999)) ) continue;
 		ivec2 curTexelLoc = ivec2 (curUV * gatherSize);
-		vec4 curWorldPosAndMaterialHint = imageLoad(worldPosAttach, curTexelLoc);
+		vec3 curWorldPos = imageLoad(worldPosAttach, curTexelLoc).xyz;
 		vec3 curNormal = fromZSignXY (floatBitsToUint (imageLoad(normAttach, curTexelLoc).x));
-		vec3 diffVec = fetchedPosAndMaterialHint.xyz - curWorldPosAndMaterialHint.xyz;
-		if ( curWorldPosAndMaterialHint.a != fetchedPosAndMaterialHint.a || dot(diffVec, diffVec) > radialCutoff || dot (curNormal, fetchedNorm) < (0.9 - roughnessMeasure * 0.1) ) continue;
+		vec3 diffVec = fetchedPos - curWorldPos;
+		if ( dot(diffVec, diffVec) > radialCutoff || dot (curNormal, fetchedNorm) < (0.9 - roughnessMeasure * 0.1) ) continue;
 		ivec2 curTexelLocDownSample = ivec2 (curUV * outputSize);
 		float curWeight = gaussianWeight (kernelWidth, abs(i));
 		glossAccum.rgb += texelFetch(lightAttach, curTexelLocDownSample, 0).rgb * curWeight;

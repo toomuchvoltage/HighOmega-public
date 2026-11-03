@@ -26,7 +26,7 @@
 #extension GL_ARB_shading_language_420pack : enable
 #extension GL_EXT_control_flow_attributes : enable
 
-layout (binding = 1, rgba32f) uniform readonly image2D worldPosAndEmissivityAttach;
+layout (binding = 1, rgba32f) uniform readonly image2D worldPosAttach;
 layout (binding = 2, rgba8) uniform readonly image2D shadowMapScreen;
 layout (binding = 3, rgba8) uniform writeonly image2D shadowMapScreenOut;
 
@@ -40,7 +40,7 @@ layout (constant_id = 1) const int yDir = 0;
 
 void main()
 {
-	vec4 fetchedWorldPosAndEmissivity = imageLoad(worldPosAndEmissivityAttach, ivec2 (gl_FragCoord.xy));
+	vec4 fetchedWorldPosAndEmissivity = imageLoad(worldPosAttach, ivec2 (gl_FragCoord.xy));
 	if ( fetchedWorldPosAndEmissivity == vec4 (0.0) )
 	{
 		imageStore (shadowMapScreenOut, ivec2 (gl_FragCoord.xy), vec4 (0.0));
@@ -57,7 +57,7 @@ void main()
 	{
 		if ( i == 0 ) continue;
 		ivec2 curTexel = ivec2 (gl_FragCoord.xy) + i * UVDir;
-		vec4 curWorldPos = imageLoad(worldPosAndEmissivityAttach, curTexel);
+		vec4 curWorldPos = imageLoad(worldPosAttach, curTexel);
 		if ( curWorldPos == vec4 (0.0) ) continue;
 		vec3 diffWithCenter = curWorldPos.xyz - fetchedWorldPosAndEmissivity.xyz;
 		if ( dot (diffWithCenter, diffWithCenter) > 1.0 ) continue;

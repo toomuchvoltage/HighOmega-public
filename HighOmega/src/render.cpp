@@ -3368,6 +3368,7 @@ HIGHOMEGA::RENDER::ComputeSubmission::ComputeSubmission()
 
 void HIGHOMEGA::RENDER::ComputeSubmission::MakeDispatch(InstanceClass & ptrToInstance, const std::string & inpName, ShaderResourceSet & inpShader, int inpGroupX, int inpGroupY, int inpGroupZ)
 {
+	ptrToInstance.GPUFlush();
 	if (!initComputelet)
 	{
 		computelet.Computelet(ptrToInstance);
@@ -3442,10 +3443,17 @@ void HIGHOMEGA::RENDER::ComputeSubmission::RemoveDispatch(InstanceClass & ptrToI
 {
 	if (dispatches.find(inpName) != dispatches.end())
 	{
+		ptrToInstance.GPUFlush();
 		delete dispatches[inpName].DS;
 		dispatches.erase(inpName);
 		updateResources = true;
 	}
+}
+
+ComputeSubmission& HIGHOMEGA::RENDER::ComputeSubmission::EnableSafeResubmit()
+{
+	safeResubmit = true;
+	return *this;
 }
 
 ComputeSubmission& HIGHOMEGA::RENDER::ComputeSubmission::MakeAsync()
@@ -3495,6 +3503,7 @@ void HIGHOMEGA::RENDER::ComputeSubmission::Submit()
 	computelet.WaitOnOldSemaphores(waitOnOld);
 	computelet.SignalSemaphores(signal);
 	if (!cpuSync) computelet.NoCPUSync();
+	if (safeResubmit) computelet.EnableSafeResubmit();
 	computelet.Submit();
 }
 

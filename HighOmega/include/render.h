@@ -214,7 +214,6 @@ namespace HIGHOMEGA
 		};
 		class GraphicsModel;
 		class GraphicsModelInstance;
-		class GroupedRenderSubmission;
 		class GroupedRenderSubmission : public ChangeSignalClass
 		{
 			friend class GraphicsModel;
@@ -421,6 +420,7 @@ namespace HIGHOMEGA
 
 			ComputeletClass computelet;
 			bool cpuSync = true;
+			bool safeResubmit = false;
 
 			unsigned long long swapchainId = 0ull;
 			struct SingleDispatch
@@ -450,6 +450,7 @@ namespace HIGHOMEGA
 			void MakeDispatch(InstanceClass & ptrToInstance, const std::string & inpName, ShaderResourceSet & inpShader, int inpGroupX, int inpGroupY, int inpGroupZ);
 			void UpdateDispatchSize(InstanceClass & ptrToInstance, const std::string & inpName, int inpGroupX, int inpGroupY, int inpGroupZ);
 			void RemoveDispatch(InstanceClass & ptrToInstance, const std::string & inpName);
+			ComputeSubmission& EnableSafeResubmit();
 			ComputeSubmission& MakeAsync();
 			ComputeSubmission& UseComputeQueue();
 			void Submit();
@@ -618,7 +619,6 @@ namespace HIGHOMEGA
 			void Render();
 		};
 
-		class WorldParamsClass;
 		class WorldParamsClass
 		{
 		public:
