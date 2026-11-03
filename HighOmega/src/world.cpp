@@ -569,8 +569,8 @@ void HIGHOMEGA::WORLD::PlasteredItemsClass::Update(float elapseTime)
 
 	if (integrateSubmission)
 	{
-		(*integrateSubmission).MakeAsync().Submit();
-		(*transformCollectionSubmission).MakeAsync().Submit();
+		(*integrateSubmission).EnableSafeResubmit().UseComputeQueue().MakeAsync().Submit();
+		(*transformCollectionSubmission).EnableSafeResubmit().UseComputeQueue().MakeAsync().Submit();
 	}
 
 	for (std::pair<const unsigned long long, std::vector<plasterCollection>> & curCollectionPair : allCollections)
@@ -2457,7 +2457,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 			float playerStandingHeight = player.physics.GetStandingHeight();
 			std::function<void(GroupedRenderSubmission*, GraphicsModelInstance*)> passThroughSubmit = [](GroupedRenderSubmission*, GraphicsModelInstance*) -> void { return; };
 			Mesh* newMesh;
-			unsigned long long physicaItemId = zoneStreamingPtr->physicalItemLoaders[threadId].AddZonePiece(zoneStreamingPtr->zoneLocation, foundMeshFromZone.name, &newMesh, zoneStreamingPtr->curPos, playerStandingHeight);
+			unsigned long long physicalItemId = zoneStreamingPtr->physicalItemLoaders[threadId].AddZonePiece(zoneStreamingPtr->zoneLocation, foundMeshFromZone.name, &newMesh, zoneStreamingPtr->curPos, playerStandingHeight);
 			unsigned long long plasteredId = zoneStreamingPtr->plasteredItemsLoaders[threadId].Populate(*newMesh, {}, passThroughSubmit, zoneStreamingPtr->perLoaderReducer[threadId]);
 			unsigned long long particlesId = zoneStreamingPtr->particleSystemLoaders[threadId].Populate(*newMesh, {}, passThroughSubmit, zoneStreamingPtr->perLoaderReducer[threadId]);
 			unsigned long long cameraRailId = zoneStreamingPtr->cameraSystemLoaders[threadId].Populate(*newMesh);
@@ -2465,7 +2465,7 @@ void HIGHOMEGA::WORLD::ZoneStreamingClass::produceZones(ZoneStreamingClass * zon
 			unsigned long long worldParamsId = zoneStreamingPtr->worldParamsLoaders[threadId].Populate(*newMesh);
 			unsigned long long laddersId = zoneStreamingPtr->ladderSystemLoaders[threadId].Populate(*newMesh);
 			{std::unique_lock<std::mutex> lk(zoneStreamingPtr->zone_producer_mutex);
-			zoneStreamingPtr->loadedItemsFromZoneMeshes[foundMeshFromZone].physicalItemId = physicaItemId;
+			zoneStreamingPtr->loadedItemsFromZoneMeshes[foundMeshFromZone].physicalItemId = physicalItemId;
 			zoneStreamingPtr->loadedItemsFromZoneMeshes[foundMeshFromZone].worldParamsId = worldParamsId;
 			zoneStreamingPtr->loadedItemsFromZoneMeshes[foundMeshFromZone].plasteredId = plasteredId;
 			zoneStreamingPtr->loadedItemsFromZoneMeshes[foundMeshFromZone].particlesId = particlesId;
@@ -3077,7 +3077,7 @@ void HIGHOMEGA::WORLD::AnimatedMeshesClass::Process(float elapseTime)
 	}
 
 	if (animateSubmission)
-		(*animateSubmission).MakeAsync().Submit();
+		(*animateSubmission).EnableSafeResubmit().UseComputeQueue().MakeAsync().Submit();
 }
 
 void HIGHOMEGA::WORLD::AnimatedMeshesClass::SetAnimationState(unsigned long long animationId, int useRefAnim, float animationPos, mat4& inpTransMat)
@@ -3812,9 +3812,9 @@ void HIGHOMEGA::WORLD::ParticleSystemClass::Update(float elapseTime, minMaxReduc
 		rerecordSubmission = false;
 	}
 
-	if (integrateSubmission) (*integrateSubmission).MakeAsync().Submit();
-	if (integrateAgainstSceneSubmission) (*integrateAgainstSceneSubmission).MakeAsync().Submit();
-	if (transformCollectionSubmission) (*transformCollectionSubmission).MakeAsync().Submit();
+	if (integrateSubmission) (*integrateSubmission).EnableSafeResubmit().UseComputeQueue().MakeAsync().Submit();
+	if (integrateAgainstSceneSubmission) (*integrateAgainstSceneSubmission).EnableSafeResubmit().UseComputeQueue().MakeAsync().Submit();
+	if (transformCollectionSubmission) (*transformCollectionSubmission).EnableSafeResubmit().UseComputeQueue().MakeAsync().Submit();
 
 	if (sdfBvhSubmission && !RTInstance::Enabled())
 	{

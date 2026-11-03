@@ -450,7 +450,6 @@ namespace HIGHOMEGA
 			void ClearContent();
 		};
 
-		class ZoneStreamingClass;
 		class PhysicalItemClass : public ThreadSafeMeshModelCache
 		{
 			friend class ZoneStreamingClass;
