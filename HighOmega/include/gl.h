@@ -53,7 +53,6 @@ namespace HIGHOMEGA
 	namespace GL
 	{
 		class InstanceClass;
-		class DescriptorSets;
 		namespace MEMORY_MANAGER
 		{
 			namespace LIBKTX2
@@ -126,8 +125,6 @@ namespace HIGHOMEGA
 		}
 		VkBool32 DEBUG_MESSAGE(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objType, uint64_t srcObject, size_t location,
 			int32_t msgCode, const char* pLayerPrefix, const char* pMsg, void* pUserData);
-		class InstanceClass;
-		class RasterletClass;
 		class WindowClass : public CStyleWrapper
 		{
 			friend class InstanceClass;
@@ -211,11 +208,6 @@ namespace HIGHOMEGA
 			R16G16B16A16F = VK_FORMAT_R16G16B16A16_SFLOAT
 		};
 		int FormatSize(FORMAT inpFormat);
-		class SemaphoreClass;
-		class ComputeletClass;
-		class RasterletClass;
-		class BufferClass;
-		class ImageClass;
 		class FenceClass : public CStyleWrapper
 		{
 			friend VkResult MEMORY_MANAGER::LIBKTX2::BindBufferMemoryCWrapper(VkBuffer buffer, uint64_t allocId);
@@ -270,7 +262,6 @@ namespace HIGHOMEGA
 			QUEUE_EXCLUSIVE = VK_SHARING_MODE_EXCLUSIVE,
 			QUEUE_CONCURRENT = VK_SHARING_MODE_CONCURRENT
 		};
-		class CommandBuffer;
 		class SemaphoreClass : public CStyleWrapper
 		{
 			friend class RasterletClass;
@@ -296,23 +287,29 @@ namespace HIGHOMEGA
 			}
 			~SemaphoreClass();
 		};
-		class KHR_RT::RTScene;
 		class CommandBuffer
 		{
 			friend class KHR_RT::RTScene;
+			friend class KHR_RT::RTAccelStruct;
+			friend class KHR_RT::RTTracelet;
 			friend class ImageClass;
+			friend class RasterletClass;
+			friend class ComputeletClass;
+			friend class GeometryClass;
+			friend class BufferClass;
 		protected:
 			static ThreadLocalCache <VkCommandPool> cmdPools[QUEUE_TYPE::MAX_QUEUES];
 			static InstanceClass *ptrToInstance;
 			QUEUE_TYPE queueType = QUEUE_TYPE::GRAPHICS_QUEUE;
 			ThreadLocalCache <VkCommandPool>::value *cmdPoolRef = nullptr;
-			std::vector<VkCommandBuffer> cmdBuffers;
-			std::vector<SemaphoreClass> ownSemaphores;
+			VkCommandBuffer cmdBuffer;
+			SemaphoreClass ownSemaphore;
 			bool haveSetupCmdBuffer = false;
-			std::vector<std::unordered_set<SemaphoreClass*>> waitOn;
-			std::vector<std::unordered_set<SemaphoreClass*>> waitOnOld;
-			std::vector<std::unordered_set<SemaphoreClass*>> signal;
-			std::vector<bool> cpuSync;
+			std::unordered_set<SemaphoreClass*> waitOn;
+			std::unordered_set<SemaphoreClass*> waitOnOld;
+			std::unordered_set<SemaphoreClass*> signal;
+			bool cpuSync = true;
+			bool safeResubmit = false;
 
 			void DestroyCommandBuffer();
 			ThreadLocalCache <VkCommandPool>::value* CreateCommandPool(InstanceClass& providedInstance, QUEUE_TYPE inQueueType = QUEUE_TYPE::GRAPHICS_QUEUE);
@@ -320,18 +317,18 @@ namespace HIGHOMEGA
 		public:
 
 			~CommandBuffer();
-			void BeginCommandBuffer(InstanceClass & instanceRef, unsigned int inpNumCmdBufs = 1, unsigned int which = 0, QUEUE_TYPE inQueueType = QUEUE_TYPE::GRAPHICS_QUEUE);
-			void EndCommandBuffer(unsigned int which = 0);
-			void WaitOnSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOn, unsigned int which = 0);
-			void WaitOnOldSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOnOld, unsigned int which = 0);
-			void SignalSemaphores(const std::unordered_set<SemaphoreClass*>& inSignal, unsigned int which = 0);
-			void NoCPUSync(unsigned int which = 0);
-			void DoCPUSync(unsigned int which = 0);
-			void SubmitCommandBuffer(unsigned int which = 0);
-			void WaitForCompletion(unsigned int which = 0);
-			unsigned int CommandBufferCount();
+			void BeginCommandBuffer(InstanceClass & instanceRef, QUEUE_TYPE inQueueType = QUEUE_TYPE::GRAPHICS_QUEUE);
+			void EndCommandBuffer();
+			void WaitOnSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOn);
+			void WaitOnOldSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOnOld);
+			void SignalSemaphores(const std::unordered_set<SemaphoreClass*>& inSignal);
+			void NoCPUSync();
+			void DoCPUSync();
+			void EnableSafeResubmit();
+			void SubmitCommandBuffer();
+			void WaitForCompletion();
+			bool CanResubmit();
 		};
-		class KHR_RT::RTScene;
 		enum MEMORY_OPTIONS
 		{
 			MEMORY_DEVICE_LOCAL = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -375,7 +372,6 @@ namespace HIGHOMEGA
 			ai |= bi;
 			return a = static_cast<MEMORY_USAGE>(ai);
 		}
-		class InstanceClass;
 		class VertBufferOffsetLen
 		{
 		public:
@@ -387,9 +383,7 @@ namespace HIGHOMEGA
 				return (rhs.offset == offset && rhs.len == len);
 			}
 		};
-		class ShaderResource;
-		class KHR_RT::RTAccelStruct;
-		class BufferClass : public CommandBuffer
+		class BufferClass
 		{
 			friend class RasterletClass;
 			friend class GeometryClass;
@@ -401,6 +395,7 @@ namespace HIGHOMEGA
 			SemaphoreClass semaphore;
 
 			std::vector<std::tuple<int, unsigned long long, MEMORY_MANAGER::SubAlloc>> subAllocs;
+			CommandBuffer downloadCmdBuf, updateCmdBuf, copyFromStagingCmdBuf, copyCmdBuf, clearCmdBuf;
 
 			bool haveBuffer;
 			bool haveSubAlloc;
@@ -448,10 +443,9 @@ namespace HIGHOMEGA
 		};
 		extern thread_local BufferClass vertexStagingBuffer;
 		extern thread_local BufferClass imageStagingBuffer;
-		class GeometryClass;
 		namespace KHR_RT
 		{
-			class RTAccelStruct : public CommandBuffer
+			class RTAccelStruct
 			{
 			protected:
 				SemaphoreClass semaphore;
@@ -467,6 +461,7 @@ namespace HIGHOMEGA
 				BufferClass accelStructBuffer;
 				BufferClass scratchBuffer;
 				InstanceClass *ptrToInstance;
+				CommandBuffer tlasCreateCmdBuf, tlasUpdateCmdBuf, batchBlasBuildCmdBuf;
 
 				bool hasAccelStruct = false, reuseUpdateCmdBuffer = false;
 				bool immutable = true;
@@ -1216,7 +1211,6 @@ namespace HIGHOMEGA
 				bool IsInitialized();
 				~RTPipelineStateClass();
 			};
-			class RTTracelet;
 			struct TraceItem
 			{
 				GeometryClass *geomRef;
@@ -1256,9 +1250,10 @@ namespace HIGHOMEGA
 				static void CreateOrUpdateRTResources(RTScene* optionalScene, InstanceClass* instancePtr, std::vector<GeometryClass*>& geomToCreateOrUpdate);
 				unsigned long long rtSceneID(std::function<void(unsigned int, BufferClass*, BufferClass*, bool)>& rtCopyTransforms);
 			};
-			class RTTracelet : public CommandBuffer
+			class RTTracelet
 			{
 			private:
+				CommandBuffer traceCmdBuf;
 				std::unordered_set<SemaphoreClass*> waitSems;
 				std::unordered_set<SemaphoreClass*> waitOldSems;
 				std::unordered_set<SemaphoreClass*> signalSems;
@@ -1353,7 +1348,7 @@ namespace HIGHOMEGA
 			GeometryClass* geom;
 			unsigned int inst;
 		};
-		class RasterletClass : public CommandBuffer
+		class RasterletClass
 		{
 		public:
 			std::unordered_set<SemaphoreClass*> waitSems;
@@ -1390,6 +1385,7 @@ namespace HIGHOMEGA
 
 		private:
 
+			std::vector<CommandBuffer> drawCmdBuf;
 			InstanceClass *ptrToInstance = nullptr;
 			FramebufferClass *ptrToFrameBuffer = nullptr;
 
@@ -1409,10 +1405,11 @@ namespace HIGHOMEGA
 			void PrepareSubmission(std::vector <PSO_DSL_DS_GeomInstPairing> & PSO_DSL_DS_GeomInstPairings, DynamicPipelineFlags &inpDynamicFlags, FramebufferClass & frameBuffer, FramebufferClass* frameBufferMainPass);
 			void Draw(bool prepass = false);
 		};
-		class ComputeletClass : public CommandBuffer
+		class ComputeletClass
 		{
 		private:
 			InstanceClass *instanceRef = nullptr;
+			CommandBuffer cmdBuf;
 
 		public:
 			ComputeletClass();
@@ -1423,6 +1420,12 @@ namespace HIGHOMEGA
 			}
 			void Start(ComputePipelineStateClass & PSO, QUEUE_TYPE inQueueType);
 			void Dispatch(ComputePipelineStateClass & PSO, DescriptorSets & DS, int groupX, int groupY, int groupZ);
+			void WaitOnSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOn);
+			void WaitOnOldSemaphores(const std::unordered_set<SemaphoreClass*>& inWaitOnOld);
+			void SignalSemaphores(const std::unordered_set<SemaphoreClass*>& inSignal);
+			void EnableSafeResubmit();
+			void NoCPUSync();
+			void DoCPUSync();
 			void End();
 			void Submit();
 		};
