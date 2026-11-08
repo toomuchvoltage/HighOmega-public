@@ -843,7 +843,8 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 														 VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
 														 VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
 														 VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
-														 VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME };
+														 VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+														 VK_EXT_DEVICE_FAULT_EXTENSION_NAME };
 
 	VkPhysicalDeviceFeatures deviceFeatures = {};
 	deviceFeatures.samplerAnisotropy = VK_TRUE;
@@ -927,9 +928,14 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 	timelineFeatures.pNext = &deviceDescriptorIndexingFeature;
 	timelineFeatures.timelineSemaphore = VK_TRUE;
 
+	VkPhysicalDeviceFaultFeaturesEXT faultFeatures = {};
+	faultFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+	faultFeatures.pNext = &timelineFeatures;
+	faultFeatures.deviceFault = VK_TRUE;
+
 	VkDeviceCreateInfo deviceCreateInfo = {};
 	deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-	deviceCreateInfo.pNext = &timelineFeatures;
+	deviceCreateInfo.pNext = &faultFeatures;
 	deviceCreateInfo.queueCreateInfoCount = 3;
 	deviceCreateInfo.pQueueCreateInfos = queueCreateInfo;
 	deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
@@ -951,7 +957,8 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 									VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
 									VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
 									VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
-									VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME };
+									VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+									VK_EXT_DEVICE_FAULT_EXTENSION_NAME };
 
 		VkPhysicalDevice8BitStorageFeaturesKHR VkPhysicalDevice8BitStorageFeatures = {};
 		VkPhysicalDevice8BitStorageFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES;
@@ -991,9 +998,14 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 		timelineFeatures.pNext = &deviceDescriptorIndexingFeature;
 		timelineFeatures.timelineSemaphore = VK_TRUE;
 
+		VkPhysicalDeviceFaultFeaturesEXT faultFeatures = {};
+		faultFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+		faultFeatures.pNext = &timelineFeatures;
+		faultFeatures.deviceFault = VK_TRUE;
+
 		deviceCreateInfo.enabledExtensionCount = (uint32_t)enabledDeviceExtensions.size();
 		deviceCreateInfo.ppEnabledExtensionNames = enabledDeviceExtensions.data();
-		deviceCreateInfo.pNext = &timelineFeatures;
+		deviceCreateInfo.pNext = &faultFeatures;
 		result = vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device);
 		if (result != VK_SUCCESS)
 		{
@@ -1066,6 +1078,7 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 	fpAcquireNextImageKHR = (PFN_vkAcquireNextImageKHR)vkGetDeviceProcAddr (device,"vkAcquireNextImageKHR");
 	fpQueuePresentKHR = (PFN_vkQueuePresentKHR)vkGetDeviceProcAddr (device,"vkQueuePresentKHR");
 	fpWaitSemaphoresKHR = (PFN_vkWaitSemaphoresKHR)vkGetDeviceProcAddr(device, "vkWaitSemaphoresKHR");
+	fpGetDeviceFaultInfoEXT = (PFN_vkGetDeviceFaultInfoEXT)vkGetDeviceProcAddr(device, "vkGetDeviceFaultInfoEXT");
 
 	fpCreateDescriptorUpdateTemplateKHR = (PFN_vkCreateDescriptorUpdateTemplateKHR)vkGetDeviceProcAddr (device, "vkCreateDescriptorUpdateTemplateKHR");
 	fpUpdateDescriptorSetWithTemplateKHR = (PFN_vkUpdateDescriptorSetWithTemplateKHR)vkGetDeviceProcAddr(device, "vkUpdateDescriptorSetWithTemplateKHR");
@@ -1085,7 +1098,8 @@ void InstanceClass::Make(bool validationLayer,WindowClass &inpWindow, bool reque
 		fpWaitSemaphoresKHR == VK_NULL_HANDLE ||
 		fpCreateDescriptorUpdateTemplateKHR == VK_NULL_HANDLE ||
 		fpUpdateDescriptorSetWithTemplateKHR == VK_NULL_HANDLE ||
-		fpDestroyDescriptorUpdateTemplateKHR == VK_NULL_HANDLE)
+		fpDestroyDescriptorUpdateTemplateKHR == VK_NULL_HANDLE ||
+		fpGetDeviceFaultInfoEXT == VK_NULL_HANDLE)
 	{
 		RemovePast();
 		FATAL_ERROR("Could not get function pointers");
@@ -1380,7 +1394,7 @@ void HIGHOMEGA::GL::InstanceClass::QueueFlush(QUEUE_TYPE queueToFlush)
         if (result == VK_ERROR_OUT_OF_HOST_MEMORY) FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: out of host memory");
         else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: out of device memory");
 		else if (result == VK_ERROR_UNKNOWN) FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: unknown error");
-		else FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: device lost");
+		else FATAL_ERROR("could not flush " + allQueues[queueToFlush].name + " queue: device lost => " + GetDeviceLostInfo());
     }
 }
 
@@ -1396,8 +1410,48 @@ void HIGHOMEGA::GL::InstanceClass::GPUFlush()
         if (result == VK_ERROR_OUT_OF_HOST_MEMORY) FATAL_ERROR("Could not flush device: out of host memory");
         else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) FATAL_ERROR("Could not flush device: out of device memory");
 		else if (result == VK_ERROR_UNKNOWN) FATAL_ERROR("Could not flush device: unknown error");
-		else FATAL_ERROR("Could not flush device: device lost");
+		else FATAL_ERROR("Could not flush device: device lost => " + GetDeviceLostInfo());
     }
+}
+
+std::string HIGHOMEGA::GL::InstanceClass::GetDeviceLostInfo()
+{
+	VkDeviceFaultCountsEXT faultCounts = {};
+	faultCounts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
+	fpGetDeviceFaultInfoEXT(device, &faultCounts, NULL);
+
+	VkDeviceFaultInfoEXT faultInfo = {};
+	faultInfo.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
+	faultInfo.pAddressInfos = (VkDeviceFaultAddressInfoEXT*) (new unsigned char[sizeof(VkDeviceFaultAddressInfoEXT) * faultCounts.addressInfoCount]);
+	faultInfo.pVendorInfos = (VkDeviceFaultVendorInfoEXT*) (new unsigned char[sizeof(VkDeviceFaultVendorInfoEXT) * faultCounts.vendorInfoCount]);
+	faultInfo.pVendorBinaryData = new unsigned char[faultCounts.vendorBinarySize];
+	fpGetDeviceFaultInfoEXT(device, &faultCounts, &faultInfo);
+
+	std::string output = std::string(faultInfo.description) + std::string("\n");
+	output += "addresses: \n";
+	for (unsigned int i = 0; i != faultCounts.addressInfoCount; i++)
+	{
+		output += std::to_string(i) + "=>";
+		output += " type: " + std::to_string((unsigned int)faultInfo.pAddressInfos[i].addressType);
+		output += " address: " + std::to_string((unsigned long long)faultInfo.pAddressInfos[i].reportedAddress);
+		output += " precision: " + std::to_string((unsigned long long)faultInfo.pAddressInfos[i].addressPrecision);
+		output += "\n";
+	}
+	output += "vendor info: \n";
+	for (unsigned int i = 0; i != faultCounts.vendorInfoCount; i++)
+	{
+		output += std::to_string(i) + "=>";
+		output += " vendor description: " + std::string(faultInfo.pVendorInfos[i].description);
+		output += " fault code: " + std::to_string((unsigned long long)faultInfo.pVendorInfos[i].vendorFaultCode);
+		output += " fault data: " + std::to_string((unsigned long long)faultInfo.pVendorInfos[i].vendorFaultData);
+		output += "\n";
+	}
+
+	delete[] faultInfo.pAddressInfos;
+	delete[] faultInfo.pVendorInfos;
+	delete[] faultInfo.pVendorBinaryData;
+
+	return output;
 }
 
 unsigned long long HIGHOMEGA::GL::InstanceClass::getSwapchainId()
@@ -2209,7 +2263,7 @@ void HIGHOMEGA::GL::FenceClass::Wait()
 		if (result == VK_ERROR_OUT_OF_HOST_MEMORY) FATAL_ERROR("Could not wait on fence: out of host memory");
 		else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) FATAL_ERROR("Could not wait on fence: out of device memory");
 		else if (result == VK_ERROR_UNKNOWN) FATAL_ERROR("Could not wait on fence: unknown error");
-		else FATAL_ERROR("Could not wait on fence: device lost");
+		else FATAL_ERROR("Could not wait on fence: device lost => " + ptrToInstance->GetDeviceLostInfo());
 	}
 }
 
@@ -3906,7 +3960,7 @@ void HIGHOMEGA::GL::CommandBuffer::SubmitCommandBuffer()
 		if (result == VK_ERROR_OUT_OF_HOST_MEMORY) FATAL_ERROR("CommandBuffer could not submit and wait on queue: out of host memory");
 		else if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) FATAL_ERROR("CommandBuffer could not submit and wait on queue: out of device memory");
 		else if (result == VK_ERROR_UNKNOWN) FATAL_ERROR("CommandBuffer could not submit and wait on queue: unknown error");
-		else FATAL_ERROR("CommandBuffer could not submit and wait on queue: device lost");
+		else FATAL_ERROR("CommandBuffer could not submit and wait on queue: device lost => " + ptrToInstance->GetDeviceLostInfo());
 	}
 
 	if (cpuSync) WaitForCompletion();

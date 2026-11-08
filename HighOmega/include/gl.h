@@ -801,6 +801,7 @@ namespace HIGHOMEGA
 			PFN_vkAcquireNextImageKHR fpAcquireNextImageKHR;
 			PFN_vkQueuePresentKHR fpQueuePresentKHR;
 			PFN_vkWaitSemaphoresKHR fpWaitSemaphoresKHR;
+			PFN_vkGetDeviceFaultInfoEXT fpGetDeviceFaultInfoEXT;
 
 			PFN_vkCreateDebugReportCallbackEXT CreateDebugReportCallback;
 			PFN_vkDestroyDebugReportCallbackEXT DestroyDebugReportCallback;
@@ -840,6 +841,7 @@ namespace HIGHOMEGA
 			bool SupportsSparseResources();
 			void QueueFlush(QUEUE_TYPE queueToFlush);
 			void GPUFlush();
+			std::string GetDeviceLostInfo();
 			unsigned long long getSwapchainId();
 			void RemovePast();
 			VkResult ThreadSafeMapMemory(VkDeviceMemory inMem, VkDeviceSize offset, VkDeviceSize len, VkMemoryMapFlags flags, void** ppData);
